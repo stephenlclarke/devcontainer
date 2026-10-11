@@ -81,10 +81,15 @@ class QualificationUmaskReceiptStabilityTest(unittest.TestCase):
                 args=types.SimpleNamespace(repository=repository,ssd_root=qualification_ssd,
                     retained_root=retained,qualification_directory=retained/'qualifications',
                     evidence=evidence,execute=True,component_fixture='E13-compose-signals',
+                    finalized_directory=retained/'finalized-package',
+                    accepted_state=retained/'accepted-state',
                     source_commit='0'*40,provenance_sha256='1'*64,state_sha256='2'*64)
                 qualifier=load_qualifier(QUALIFY_SOURCE)
                 qualifier.parse_args=lambda:args
-                def validate_inputs(selected):
+                def validate_inputs(selected, *, candidate_diagnostic=False):
+                    self.assertFalse(candidate_diagnostic)
+                    self.assertIsNotNone(selected.finalized_directory)
+                    self.assertIsNotNone(selected.accepted_state)
                     selected._manifest={}
                     return {}
                 qualifier.validate_inputs=validate_inputs

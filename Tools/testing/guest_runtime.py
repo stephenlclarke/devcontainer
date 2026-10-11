@@ -22,7 +22,7 @@ from exec_probe import exec_streams
 from network_volume_probe import NetworkVolumeFixture
 from engine_probe import request
 from build_fixture import BuildFixture
-from build_runtime import ReleasedBuilder, admit_builder
+from build_runtime import ReleasedBuilder, admit_builder, bind_provider_configuration
 from fault_probe import FaultFixture
 from attachment_probe import AttachmentFixture, FIXTURE as ATTACHMENT_FIXTURE
 from foreground_probe import ForegroundFixture, FIXTURE as FOREGROUND_FIXTURE
@@ -38,6 +38,18 @@ from compose_terminal_probe import ComposeTerminalSizeFixture
 FIXTURES = {ATTACHMENT_FIXTURE, FOREGROUND_FIXTURE, INITIAL_TERMINAL_FIXTURE, *COMPOSE_FOREGROUND_FIXTURES, "C03-compose-resources", "C02-compose-dependencies", "C01-compose-service", "E02-container-lifecycle", "E03-exec-streams", "E04-image-build", "E05-archive-copy", "E06-network-volume", "F01-fault-recovery", "D01-image-config", "D02-dockerfile-config", "D03-users-environment", "D04-lifecycle-hooks", "D05-features", "D06-ports", "D07-reuse-cleanup"}
 PROVISION_STEPS = ("guest-kernel", "guest-initialization", "guest-workload")
 GUEST_API_VERSION = "1.53"
+# Historical locks remain readable; selecting a guest always requires its exact
+# official reference, manifest and arm64 config, never a version fallback.
+STOCK_INITIALIZATION_IMAGES = {
+    "ghcr.io/apple/containerization/vminit:0.45.0": (
+        "sha256:1fd7044462959fdb8851ceff94c172bb46f0e1635319f805e1ef9d8b1fe8bd73",
+        "sha256:c7146472cafa9cb0334fb309054c38b2c7836149da9cf06b0906dfa494862c87",
+    ),
+    "ghcr.io/apple/containerization/vminit:0.47.0": (
+        "sha256:c5c20071df2a9f249f82c9c2940539bd568360540559921a29f9f8b78df67ade",
+        "sha256:9f6055935bd1bc0c3299f81b927d8b26e1fa57da5a542d20ce94895b789b4764",
+    ),
+}
 
 
 def require_guest_api(socket: Path) -> dict:
@@ -98,7 +110,13 @@ def admit_guest(kernel_lock: dict, image_lock: dict, lane: str, retained: Path, 
                     or re.fullmatch(r"[0-9a-f]{40}", str(value.get("source", ""))) is None):
                 raise ValueError("Q provider image identity is malformed")
         selected_provider_images = provider_image_references
-    init_reference = ("ghcr.io/apple/containerization/vminit:0.45.0" if lane == "apple-stock" else
+    if lane == "apple-stock":
+        stock = by_name["stock-vminit"]
+        expected = STOCK_INITIALIZATION_IMAGES.get(stock["reference"])
+        if (stock["repository"] != "ghcr.io/apple/containerization/vminit"
+                or expected != (stock["manifest"], stock["config"])):
+            raise ValueError("Stock initialization reference differs from the exact reviewed official image")
+    init_reference = (by_name["stock-vminit"]["reference"] if lane == "apple-stock" else
                       selected_provider_images["guest"]["reference"] if selected_provider_images else
                       "ghcr.io/stephenlclarke/containerization/vminit:7e066a3101bc84fa0f7231daf6a03aa9ef62a567")
     if by_name[names[lane]]["reference"] != init_reference:
@@ -132,12 +150,27 @@ class ReleasedGuest:
 
     def __init__(self, inputs: dict, fixture: str, root: Path, owner: dict, runtime, container: str, socket: Path | None,
                  *, observe=None, image_id: str | None = None,
-                 compose_selection: dict[str, str] | None = None):
+                 compose_selection: dict[str, str] | None = None,
+                 attachment_generations: int = 2):
         if fixture not in FIXTURES:
             raise ValueError("Unsupported released guest fixture")
+        if type(attachment_generations) is not int or attachment_generations not in {2, 8}:
+            raise ValueError("Attachment generation count must be 2 or 8")
+        identity = owner.get("identity") if isinstance(owner, dict) else None
+        if attachment_generations == 8 and (
+                fixture != ATTACHMENT_FIXTURE or not container
+                or not isinstance(identity, dict)
+                or not re.fullmatch(r"[0-9a-f]{40}", str(identity.get("sourceCommit", "")))
+                or not re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                    str(identity.get("candidateInvocation", "")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(identity.get("candidateReceiptSHA256", "")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(identity.get("archiveSHA256", "")))):
+            raise ValueError("Eight attachment generations require an owned native candidate E07 guest")
         self.inputs, self.fixture, self.root = inputs, fixture, root
         self.owner, self.runtime, self.container, self.socket = owner, runtime, container, socket
         self.compose_selection = compose_selection
+        self.attachment_generations = attachment_generations
         self.observe, self.guest, self.commands = observe, None, []
         self.builder = None
         self.pending_logs = {}
@@ -189,7 +222,14 @@ class ReleasedGuest:
         return journal.records()[name + ".log"]
 
     def provision(self):
+        # The qualifier selects configuration before API startup. Preparation
+        # uses a separate journal, so authenticate and bind those exact bytes
+        # again to these freshly admitted inputs before constructing a builder.
+        if (self.root / "container/config/config.toml").exists():
+            bind_provider_configuration(self.root, self.inputs, self.runtime.journal)
         self.runtime.journal.put("guest-inputs.json", canonical(self.inputs))
+        starts_builder = self.fixture in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config",
+                                         "D03-users-environment", "D05-features"}
         with deadline(190):
             kernel = Path(self.inputs["kernel"]["files"]["kernel"])
             self.command("guest-kernel", ["system", "kernel", "set", "--arch", "arm64", "--binary", str(kernel)])
@@ -202,7 +242,13 @@ class ReleasedGuest:
                 raise ValueError("Private runtime kernel does not match its admitted release")
             for name in ("initialization", "workload"):
                 self.command("guest-" + name, ["image", "load", "--input", self.inputs[name]["path"]])
-        if self.fixture in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config", "D03-users-environment", "D05-features"}:
+            if "builder" in self.inputs and not starts_builder:
+                # Provider-only preparation must load the selected released
+                # builder locally before any build can try its remote tag.
+                # Admission authenticates the archive OCI closure; worker
+                # ownership later rechecks it through require_native_image.
+                self.command("guest-builder-preload", ["image", "load", "--input", self.inputs["builder"]["path"]])
+        if starts_builder:
             self.builder = ReleasedBuilder(self.inputs["builder"], self.root, self.runtime.journal, self.command)
             with deadline(300):
                 self.builder.provision()
@@ -265,8 +311,9 @@ class ReleasedGuest:
         if self.fixture == ATTACHMENT_FIXTURE:
             self.guest = AttachmentFixture(self.socket, digest(canonical(self.owner["identity"])),
                                             self.image_id, GUEST_API_VERSION, self.runtime.journal,
+                                            generation_count=self.attachment_generations,
                                             observe=self.observe)
-            with deadline(150):
+            with deadline(600 if self.attachment_generations == 8 else 150):
                 return self.guest.operation()
         if self.fixture in {FOREGROUND_FIXTURE, INITIAL_TERMINAL_FIXTURE}:
             factory = InitialTerminalSizeFixture if self.fixture == INITIAL_TERMINAL_FIXTURE else ForegroundFixture

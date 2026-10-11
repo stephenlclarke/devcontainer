@@ -13,7 +13,8 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 from urllib.parse import parse_qs, urlsplit
 
-from attachment_probe import AttachmentFixture, BINARY_INPUT, ERROR_OUTPUT, OUTPUT_PREFIX, OUTPUT_SUFFIX, observed_duplex, started_output
+from attachment_probe import (AttachmentFixture, BINARY_INPUT, ERROR_OUTPUT, OUTPUT_PREFIX, OUTPUT_SUFFIX,
+                              _history_output_limit, observed_duplex, started_output)
 from case_evidence import contract_observations
 from test_exec_probe import frame
 import test_guest_fixture as helpers
@@ -37,7 +38,10 @@ class Handler(helpers.Handler):
         if path.endswith("/start"):
             if server.attached.is_set():
                 status, value = super().dispatch()
+                server.starts += 1
                 server.started.set()
+                if server.truncate_history_after_starts == server.starts:
+                    server.truncate_history = True
                 return status, value
             return 409, {"message": "start preceded attachment"}
         if path.endswith("/wait"):
@@ -137,6 +141,7 @@ class AttachmentTests(unittest.TestCase):
         self.server.duplicate_combined = False
         self.server.log_driver = {"Type": "json-file", "Config": {}}
         self.server.first_history, self.server.duplicate_first = b"", False
+        self.server.starts, self.server.truncate_history_after_starts = 0, None
         self.events = []
         self.fixture.observe = self.events.append
 
@@ -159,6 +164,65 @@ class AttachmentTests(unittest.TestCase):
         self.assertIn("init-combined-attachment.json", self.journal.records())
         self.assertEqual(self.fixture.cleanup(), {"status": "passed", "remainingOwnedResources": []})
         self.assertEqual(self.reopen().cleanup()["status"], "passed")
+
+    def test_eight_generation_diagnostic_checks_every_restart_and_retains_each_summary(self):
+        fixture = AttachmentFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                                    generation_count=8, observe=self.events.append)
+        contract = Path(__file__).parents[2] / "Tests/Parity/fixtures/E07-init-attachment/contract.json"
+        expected = contract_observations(json.loads(contract.read_text())["expected"])
+        self.assertEqual(fixture.operation(), expected)
+        attachments = [event for event in self.events if "/attach?" in event["route"]]
+        self.assertEqual(len(attachments), 17)
+        self.assertEqual(self.server.starts, 8)
+        self.assertEqual({event["generation"] for event in attachments}, set(range(1, 9)))
+        self.assertEqual(sum("logs=1&stream=1&stdin=0" in event["route"] for event in attachments), 1)
+        records = self.journal.records()
+        self.assertEqual(json.loads(records["init-generations.json"]), {
+            "count": 8, "diagnosticOnly": True, "perTransferDeadlineSeconds": 30})
+        for generation in range(1, 9):
+            record = json.loads(records[f"init-generation-{generation}.json"])
+            self.assertEqual(record["generation"], generation)
+            self.assertEqual(record["inputBytes"], len(BINARY_INPUT))
+            self.assertGreater(record["durationNS"], 0)
+            self.assertIn(f"init-history-{generation}.json", records)
+        self.assertEqual(fixture.cleanup(), {"status": "passed", "remainingOwnedResources": []})
+
+    def test_eight_generation_diagnostic_stops_at_first_failed_history_check(self):
+        self.server.truncate_history_after_starts = 3
+        fixture = AttachmentFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                                    generation_count=8)
+        with self.assertRaisesRegex(ValueError, "Truncated exec stream"):
+            fixture.operation()
+        self.assertEqual(self.server.starts, 3)
+        records = self.journal.records()
+        self.assertIn("init-generation-1.json", records)
+        self.assertIn("init-generation-2.json", records)
+        self.assertNotIn("init-generation-3.json", records)
+        self.assertNotIn("init-history-4.json", records)
+        self.assertEqual(fixture.cleanup()["status"], "passed")
+
+    def test_attachment_generation_count_is_finite(self):
+        for value in (0, 3, 9, True):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "only 2 or 8"):
+                AttachmentFixture(self.socket, self.owner, self.server.image, "1.54", self.journal,
+                                  generation_count=value)
+
+    def test_history_output_bound_preserves_default_and_is_expected_size_bounded(self):
+        history = (b"stdout" * 4, b"stderr" * 3)
+        self.assertEqual(_history_output_limit(history, 2), 40 * 1024**2)
+        self.assertEqual(_history_output_limit(history, 8), 40 * 1024**2 + sum(map(len, history)))
+        with self.assertRaisesRegex(ValueError, "only 2 or 8"):
+            _history_output_limit(history, 9)
+
+    def test_expanded_output_bound_is_rejected_for_live_or_unselected_history(self):
+        fixture = object.__new__(AttachmentFixture)
+        fixture.generation_count = 8
+        expanded = 40 * 1024**2 + 1
+        with self.assertRaisesRegex(ValueError, "limited to eight-generation history"):
+            fixture.transfer(history=False, live=True, incoming=BINARY_INPUT,
+                             generation=3, output_limit=expanded)
+        with self.assertRaisesRegex(ValueError, "limited to eight-generation history"):
+            fixture.transfer(history=True, live=False, generation=None, output_limit=expanded)
 
     def test_malformed_history_cannot_satisfy_observations(self):
         self.server.truncate_history = True

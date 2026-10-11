@@ -170,6 +170,24 @@ struct ProcessRunnerTests {
     }
 
     @Test
+    func `signal pid reader waits for a complete marker`() async throws {
+        let root = TestStorage.temporaryDirectory.appendingPathComponent("signal-pid-marker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("pid")
+        try Data().write(to: marker)
+
+        let writer = Task {
+            try await Task.sleep(for: .milliseconds(25))
+            try Data("2468\n".utf8).write(to: marker)
+        }
+        let pid = try await waitForSignalPIDMarker(marker, checks: 100)
+
+        #expect(pid == 2468)
+        try await writer.value
+    }
+
+    @Test
     func `signal cleanup rejects a changed process incarnation or ownership edge`() {
         let expected = SignalRelayProcessIdentity(
             pid: 41, parentPID: 17, processGroupID: 41,

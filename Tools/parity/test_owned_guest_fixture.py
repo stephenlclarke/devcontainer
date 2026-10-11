@@ -20,7 +20,8 @@ import unittest
 from unittest import mock
 
 from owned_guest_fixture import (ApiRuntimeView, OwnedGuestFixtureRunner,
-                                 _active_provider_home, admit_guest_inputs)
+                                 _active_provider_home, _safe_attachment_diagnostic_trace,
+                                 admit_guest_inputs)
 from parity_lib import ParityError
 
 
@@ -29,6 +30,176 @@ ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
 
 
 class OwnedGuestFailureTests(unittest.TestCase):
+    def test_eight_attachment_generations_reject_non_candidate_and_multi_fixture_scope(self) -> None:
+        runner = SimpleNamespace(lane="apple-stock", repository=REPOSITORY,
+                                 candidate_selection=None)
+        with self.assertRaisesRegex(ParityError, "native candidate diagnostic"):
+            OwnedGuestFixtureRunner(runner, [], fixture_selection=("E07-init-attachment",),
+                                    attachment_generations=8)
+        runner.candidate_selection = {"candidate_invocation": "candidate"}
+        with self.assertRaisesRegex(ParityError, "native candidate diagnostic"):
+            OwnedGuestFixtureRunner(runner, [], fixture_selection=("D05-features", "E07-init-attachment"),
+                                    attachment_generations=8)
+
+    def test_released_guest_rejects_eight_generations_without_native_candidate_identity(self) -> None:
+        guest_runtime = importlib.import_module("guest_runtime")
+        owner = {"identity": {"fixture": "E07-init-attachment"}}
+        with self.assertRaisesRegex(ValueError, "owned native candidate E07"):
+            guest_runtime.ReleasedGuest({}, "E07-init-attachment", Path("/tmp/case"), owner,
+                                        object(), "/provider/container", Path("/tmp/engine.sock"),
+                                        attachment_generations=8)
+        candidate_owner = {"identity": {
+            "candidateInvocation": "candidate", "candidateReceiptSHA256": "a" * 64,
+            "archiveSHA256": "b" * 64,
+        }}
+        with self.assertRaisesRegex(ValueError, "owned native candidate E07"):
+            guest_runtime.ReleasedGuest({}, "E07-init-attachment", Path("/tmp/case"), candidate_owner,
+                                        object(), "", Path("/tmp/engine.sock"), attachment_generations=8)
+
+    def test_failed_e07_projection_retains_generation_numbers_and_bounded_stage_rows(self) -> None:
+        events = [{"stage": "duplex", "durationNS": generation, "generation": generation,
+                   "stream": {"inputAcceptedBytes": generation, "payload": "omit"}}
+                  for generation in range(1, 9)]
+        trace = _safe_attachment_diagnostic_trace(events)
+        self.assertEqual([item["generation"] for item in trace], list(range(1, 9)))
+        self.assertTrue(all(item["stream"] == {"inputAcceptedBytes": index}
+                            for index, item in enumerate(trace, 1)))
+
+    def test_multi_fixture_candidate_guard_is_reused_for_later_e07_case_and_cleanup(self) -> None:
+        import guest_runtime
+        import owned_guest_fixture
+
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "workflow"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            selection = ("C03-compose-resources", "D05-features", "E07-init-attachment")
+            candidate = {
+                "scope": "local-candidate-integration-only",
+                "candidateInvocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "sourceCommit": "a" * 40, "runtimeProfile": "stock",
+                "assetSHA256": "b" * 64, "candidateReceiptSHA256": "c" * 64,
+            }
+            guard_identity = {
+                "campaign": "candidate-campaign", "sourceCommit": candidate["sourceCommit"],
+                "scope": "unsigned-native-candidate-diagnostic",
+                "candidateInvocation": candidate["candidateInvocation"],
+                "candidateReceiptSHA256": candidate["candidateReceiptSHA256"],
+                "archiveSHA256": candidate["assetSHA256"], "runtimeProfile": "stock",
+                "diagnosticFixtures": sorted(selection),
+            }
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            environment = {"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                           "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                           "DEVCONTAINER_PARITY_GUARD": str(guard_path)}
+            runner = SimpleNamespace(lane="apple-stock", output=campaign / "apple-stock",
+                                     environment=environment, finalized_identity=None,
+                                     candidate_identity=candidate,
+                                     cleanup_differences=[],
+                                     _preserve_engine_on_uncertain_guest_cleanup=False)
+            owner_home = {"identity": {"campaign": "candidate-campaign", "lane": "apple-stock",
+                                        "sourceCommit": candidate["sourceCommit"]}, "root": str(home)}
+            (home / "owner.json").write_text(json.dumps(owner_home, sort_keys=True) + "\n")
+            (home / "owner.json").chmod(0o600)
+
+            fixture = SimpleNamespace(identifier="E07-init-attachment", expected={})
+            case_root = campaign / "owned-guest-runtime" / "apple-stock" / fixture.identifier
+            case_root.mkdir(mode=0o700, parents=True)
+            case_identity = {"campaign": campaign.name, "lane": "apple-stock",
+                             "fixture": fixture.identifier,
+                             "endpointSHA256": hashlib.sha256(b"/tmp/engine.sock").hexdigest(),
+                             **owned_guest_fixture._admitted_package_guest_identity(runner)}
+            case_owner = {"identity": case_identity, "root": str(case_root)}
+            (case_root / "owner.json").write_bytes(
+                json.dumps(case_owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode())
+            raw = base / "raw"
+            raw.mkdir(mode=0o700)
+
+            class Journal:
+                def __init__(self):
+                    self.entries = {}
+
+                def put(self, name, payload):
+                    self.entries[name] = payload
+
+                def receipt(self):
+                    return {"status": "restored"}
+
+            journal = Journal()
+            selections = []
+
+            class Runtime:
+                def __init__(self, _runner, _journal, _socket, _compose, fixture_selection):
+                    self.journal = _journal
+                    self.fixture_selection = fixture_selection
+
+                def verify(self):
+                    selections.append(self.fixture_selection)
+                    owned_guest_fixture._active_provider_home(
+                        runner, fixture_selection=self.fixture_selection)
+
+            class Guest:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def operation(self):
+                    return {"ready": "true"}
+
+                def cleanup(self):
+                    return {"status": "passed", "remainingOwnedResources": []}
+
+            bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+            bridge.runner, bridge.repository, bridge.lane = runner, REPOSITORY, "apple-stock"
+            bridge.fixtures = [fixture]
+            bridge.fixture_selection = selection
+            bridge.retained = retained
+            bridge.inputs = {"workload": {"image": {}}}
+            bridge.socket, bridge.compose, bridge.container = Path("/tmp/engine.sock"), None, "/provider/container"
+            bridge.preparation_error = None
+            bridge.preparation = (home, journal, SimpleNamespace(), owner_home)
+            bridge._case_paths = mock.Mock(return_value=(case_root, journal, case_owner))
+            bridge._provision_event_sequence = 0
+            bridge.image_preexisting = False
+            bridge.loaded_image_id = None
+
+            with (mock.patch.object(owned_guest_fixture, "LaneRuntimeView", Runtime),
+                  mock.patch.object(guest_runtime, "ReleasedGuest", Guest),
+                  mock.patch.object(owned_guest_fixture, "assert_contract", return_value=[]),
+                  mock.patch.object(owned_guest_fixture, "ACCOUNT_HOME", base)):
+                owned_guest_fixture._active_provider_home(runner, fixture_selection=selection)
+                result = bridge.run(fixture, raw)
+
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(selections, [selection, selection])
+            self.assertEqual(case_identity["sourceCommit"], candidate["sourceCommit"])
+            self.assertEqual(case_identity["archiveSHA256"], candidate["assetSHA256"])
+            self.assertEqual(case_identity["candidateInvocation"], candidate["candidateInvocation"])
+            self.assertEqual(case_identity["candidateReceiptSHA256"], candidate["candidateReceiptSHA256"])
+
+            runner.attachment_generations = 8
+            guard_identity["diagnosticFixtures"] = ["E07-init-attachment"]
+            guard_identity["attachmentGenerations"] = 8
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            self.assertEqual(owned_guest_fixture._active_provider_home(
+                runner, fixture_selection=("E07-init-attachment",))[0], home)
+            guard_identity.pop("attachmentGenerations")
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                owned_guest_fixture._active_provider_home(
+                    runner, fixture_selection=("E07-init-attachment",))
+
     def test_failed_e07_retains_only_bounded_stage_and_stream_diagnostics(self) -> None:
         import guest_runtime
         import owned_guest_fixture
@@ -518,6 +689,98 @@ class OwnedGuestAdmissionTests(unittest.TestCase):
 
 
 class ActiveProviderHomeTests(unittest.TestCase):
+    def test_candidate_diagnostic_guard_binds_candidate_package_and_exact_fixture_selection(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "workflow"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            selection = ("C03-compose-resources", "D05-features", "E07-init-attachment")
+            candidate = {
+                "scope": "local-candidate-integration-only",
+                "candidateInvocation": "47387ce0-3819-4eca-b06e-11356ce4568d",
+                "sourceCommit": "a" * 40, "runtimeProfile": "stock",
+                "assetSHA256": "b" * 64, "candidateReceiptSHA256": "c" * 64,
+            }
+            guard_identity = {
+                "campaign": "candidate-campaign", "sourceCommit": candidate["sourceCommit"],
+                "scope": "unsigned-native-candidate-diagnostic",
+                "candidateInvocation": candidate["candidateInvocation"],
+                "candidateReceiptSHA256": candidate["candidateReceiptSHA256"],
+                "archiveSHA256": candidate["assetSHA256"], "runtimeProfile": "stock",
+                "diagnosticFixtures": sorted(selection),
+            }
+            guard_path.write_text(json.dumps({"identity": guard_identity, "root": str(campaign)},
+                                             sort_keys=True))
+            guard_path.chmod(0o600)
+            owner = {"identity": {"campaign": "candidate-campaign", "lane": "apple-stock",
+                                  "sourceCommit": candidate["sourceCommit"]}, "root": str(home)}
+            marker = home / "owner.json"
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            marker.chmod(0o600)
+            runner = SimpleNamespace(
+                environment={"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                             "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                             "DEVCONTAINER_PARITY_GUARD": str(guard_path)},
+                lane="apple-stock", output=campaign / "apple-stock",
+                finalized_identity=None, candidate_identity=candidate,
+            )
+
+            with mock.patch("owned_guest_fixture.ACCOUNT_HOME", base):
+                self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
+                for key, changed in (("candidateInvocation", "different-invocation"),
+                                     ("candidateReceiptSHA256", "d" * 64),
+                                     ("assetSHA256", "e" * 64), ("sourceCommit", "f" * 40),
+                                     ("runtimeProfile", "enhanced")):
+                    original = candidate[key]
+                    candidate[key] = changed
+                    with self.subTest(key=key), self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                        _active_provider_home(runner, fixture_selection=selection)
+                    candidate[key] = original
+                with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                    _active_provider_home(runner, fixture_selection=("C03-compose-resources", "unknown"))
+
+    def test_finalized_native_diagnostic_guard_binds_its_finite_fixture_selection(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
+            base = Path(temporary).resolve()
+            campaign = base / "campaign"
+            campaign.mkdir(mode=0o700)
+            home = campaign / "apple-stock-home"
+            home.mkdir(mode=0o700)
+            (home / "container").mkdir(mode=0o700)
+            retained = base / "workflow"
+            retained.mkdir(mode=0o700)
+            guard_path = retained / "runtime-admission.json"
+            selection = ("E07-init-attachment",)
+            guard = {"identity": {"campaign": "finalized-campaign", "sourceCommit": "a" * 40,
+                                  "scope": "finalized-native-parity-diagnostic",
+                                  "diagnosticFixtures": list(selection)},
+                     "root": str(campaign)}
+            guard_path.write_text(json.dumps(guard, sort_keys=True))
+            guard_path.chmod(0o600)
+            owner = {"identity": {"campaign": "finalized-campaign", "lane": "apple-stock",
+                                  "sourceCommit": "a" * 40}, "root": str(home)}
+            marker = home / "owner.json"
+            marker.write_text(json.dumps(owner, sort_keys=True) + "\n")
+            marker.chmod(0o600)
+            runner = SimpleNamespace(
+                environment={"HOME": str(home), "CONTAINER_APP_ROOT": str(home / "container"),
+                             "DEVCONTAINER_PARITY_RETAINED_ROOT": str(retained),
+                             "DEVCONTAINER_PARITY_GUARD": str(guard_path)},
+                lane="apple-stock", output=campaign / "apple-stock",
+                finalized_identity={"sourceCommit": "a" * 40}, candidate_identity=None,
+            )
+
+            with mock.patch("owned_guest_fixture.ACCOUNT_HOME", base):
+                self.assertEqual(_active_provider_home(runner, fixture_selection=selection), (home, owner))
+                with self.assertRaisesRegex(ParityError, "campaign guard differs"):
+                    _active_provider_home(runner, fixture_selection=("C03-compose-resources",))
+
     def test_component_guard_is_bound_only_to_each_exact_supported_fixture_selection(self) -> None:
         with tempfile.TemporaryDirectory(dir=ACCOUNT_HOME) as temporary:
             base = Path(temporary).resolve()
@@ -626,6 +889,118 @@ class ActiveProviderHomeTests(unittest.TestCase):
 
 
 class NativeProvisionBeforeEngineTests(unittest.TestCase):
+    def test_d05_warm_provider_preparation_uses_only_kernel_and_init_prerequisites(self) -> None:
+        import owned_guest_fixture
+
+        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+        import guest_runtime
+
+        inputs = {"kernel": {"sha256": "a" * 64},
+                  "initialization": {"archiveSHA256": "b" * 64},
+                  "workload": {"archiveSHA256": "c" * 64},
+                  "builder": {"archiveSHA256": "d" * 64}}
+        events = []
+        owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
+        root, journal = Path("/private/provider-home"), mock.Mock()
+
+        class Runtime:
+            def __init__(self, *_args):
+                events.append("api-view")
+
+            def verify(self):
+                events.append("api-verify")
+
+        guests = []
+
+        class Guest:
+            def __init__(self, *args, **_kwargs):
+                self.fixture = args[1]
+                self.socket = args[6]
+                guests.append(self)
+
+            def provision(self):
+                events.append("kernel-and-init-provision")
+
+        bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+        bridge.runner = SimpleNamespace(lane="apple-stock")
+        bridge.lane, bridge.repository = "apple-stock", REPOSITORY
+        bridge.fixtures, bridge.retained, bridge.inputs = [], Path("/retained"), inputs
+        bridge.fixture_selection = ("D05-features",)
+        bridge.builder_required, bridge.provider_required = False, True
+        bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
+        bridge.preparation, bridge.preparation_error = None, None
+        bridge._provision_event_sequence = 0
+        bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
+
+        with (mock.patch.object(owned_guest_fixture, "ApiRuntimeView", Runtime),
+              mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs) as admit,
+              mock.patch.object(owned_guest_fixture, "guest_input_identity", side_effect=lambda value: value),
+              mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
+            bridge.prepare_native_provider()
+
+        self.assertEqual(guests[0].fixture, "E07-init-attachment")
+        self.assertIsNone(guests[0].socket)
+        self.assertIn("builder", inputs)
+        self.assertEqual(admit.call_args_list, [mock.call(REPOSITORY, "apple-stock", Path("/retained"), builder=True)] * 2)
+        self.assertEqual(events.count("kernel-and-init-provision"), 1)
+        self.assertLess(events.index("api-verify"), events.index("kernel-and-init-provision"))
+
+    def test_c03_provider_prerequisite_uses_e07_provisioning_without_running_e07(self) -> None:
+        import owned_guest_fixture
+
+        sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
+        import guest_runtime
+
+        inputs = {"kernel": {"sha256": "a" * 64},
+                  "initialization": {"archiveSHA256": "b" * 64},
+                  "workload": {"archiveSHA256": "c" * 64}}
+        events = []
+        owner = {"identity": {"campaign": "campaign", "lane": "apple-stock"}}
+        root, journal = Path("/private/provider-home"), mock.Mock()
+
+        class Runtime:
+            def __init__(self, *_args):
+                events.append("api-view")
+
+            def verify(self):
+                events.append("api-verify")
+
+        guests = []
+
+        class Guest:
+            def __init__(self, *args, **_kwargs):
+                self.fixture = args[1]
+                self.socket = args[6]
+                guests.append(self)
+
+            def provision(self):
+                events.append("kernel-and-init-provision")
+
+        bridge = OwnedGuestFixtureRunner.__new__(OwnedGuestFixtureRunner)
+        bridge.runner = SimpleNamespace(lane="apple-stock")
+        bridge.lane, bridge.repository = "apple-stock", REPOSITORY
+        bridge.fixtures, bridge.retained, bridge.inputs = [], Path("/retained"), inputs
+        bridge.fixture_selection = ("C03-compose-resources",)
+        bridge.builder_required, bridge.provider_required = False, True
+        bridge.container, bridge.socket, bridge.compose = "/provider/bin/container", None, None
+        bridge.preparation, bridge.preparation_error = None, None
+        bridge._provision_event_sequence = 0
+        bridge._case_paths_for_preparation = mock.Mock(return_value=(root, journal, owner))
+
+        with (mock.patch.object(owned_guest_fixture, "ApiRuntimeView", Runtime),
+              mock.patch.object(owned_guest_fixture, "admit_guest_inputs", return_value=inputs) as admit,
+              mock.patch.object(owned_guest_fixture, "guest_input_identity", side_effect=lambda value: value),
+              mock.patch.object(guest_runtime, "ReleasedGuest", Guest)):
+            bridge.prepare_native_provider()
+
+        self.assertEqual([guest.fixture for guest in guests], ["E07-init-attachment"])
+        self.assertIsNone(guests[0].socket)
+        self.assertNotIn("builder", inputs)
+        self.assertEqual(admit.call_args_list,
+                         [mock.call(REPOSITORY, "apple-stock", Path("/retained"), builder=False)] * 2)
+        self.assertEqual(events.count("kernel-and-init-provision"), 1)
+        self.assertLess(events.index("api-verify"), events.index("kernel-and-init-provision"))
+
     def test_native_provision_uses_api_view_without_a_placeholder_socket_once(self) -> None:
         for identifier in ("E07-init-attachment", "E06-network-volume", "E04-image-build"):
             with self.subTest(fixture=identifier):

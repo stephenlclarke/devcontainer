@@ -798,8 +798,9 @@ class RuntimeServicesTests(unittest.TestCase):
                 11: {"pid": 11, "parent": 10, "group": 10, "started": "child", "program": "/runner/worker"},
                 20: {"pid": 20, "parent": 1, "group": 20, "started": "other", "program": "/bin/bash"}}
         self.inventory.return_value = rows
+        prior = [{"label": API, **self.launchd.jobs[API]}]
         with patch.object(self.launchd, "process_id", return_value=10):
-            owned = capture_owned_processes(self.launchd, [{"label": API}])
+            owned = capture_owned_processes(self.launchd, prior)
         self.assertEqual([item["pid"] for item in owned], [10, 11])
         runtime = self.runtime()
         runtime.original_processes = owned
@@ -811,6 +812,38 @@ class RuntimeServicesTests(unittest.TestCase):
                 runtime.require_original_processes_stopped()
         self.inventory.return_value = {10: dict(rows[10], started="new process"), 20: rows[20]}
         runtime.require_original_processes_stopped()
+
+    def test_ownership_capture_retries_only_a_proven_pid_transition(self):
+        prior = [{"label": API, **self.launchd.jobs[API]}]
+        first = {
+            10: {"pid": 10, "parent": 1, "group": 10, "started": "old", "program": "/original/api"},
+        }
+        second = {
+            11: {"pid": 11, "parent": 1, "group": 11, "started": "new", "program": "/original/api"},
+            12: {"pid": 12, "parent": 11, "group": 11, "started": "child", "program": "/original/helper"},
+        }
+        with patch.object(self.launchd, "process_id", side_effect=[10, 11, 11, 11]), \
+             patch("runtime_services.process_inventory", side_effect=[first, second]):
+            captured = capture_owned_processes(self.launchd, prior)
+        self.assertEqual([item["pid"] for item in captured], [11, 12])
+        self.assertEqual(captured[0]["labels"], [API])
+        self.assertEqual(captured[1]["labels"], [API])
+
+    def test_ownership_capture_rejects_a_stable_pid_missing_from_process_inventory(self):
+        prior = [{"label": API, **self.launchd.jobs[API]}]
+        with patch.object(self.launchd, "process_id", return_value=10), \
+             patch("runtime_services.process_inventory", return_value={}):
+            with self.assertRaisesRegex(ValueError, "Stable service process identity"):
+                capture_owned_processes(self.launchd, prior)
+
+    def test_ownership_capture_rejects_definition_change_during_pid_transition(self):
+        prior = [{"label": API, **self.launchd.jobs[API]}]
+        changed = {"label": API, "path": "/changed/apiserver.plist", "program": "/changed/api"}
+        with patch.object(self.launchd, "process_id", side_effect=[10, 11]), \
+             patch("runtime_services.process_inventory", return_value={}), \
+             patch.object(self.launchd, "inspect", side_effect=[self.launchd.jobs[API], changed]):
+            with self.assertRaisesRegex(ValueError, "Service definitions changed"):
+                capture_owned_processes(self.launchd, prior)
 
     def test_partial_prepare_may_preserve_a_still_registered_original(self):
         runtime = self.runtime()

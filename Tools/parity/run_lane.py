@@ -44,22 +44,114 @@ from engine_fixture_routes import (
     ENGINE_FIXTURE_ROUTES,
     validate_engine_fixture_routes,
 )
+from feature_cache_diagnostic import prepare_d05_feature_cache, verify_d05_feature_cache
 
 
 FIXTURE_WORKSPACE_MARKER = ".devcontainer-parity-workspace-root"
 FIXTURE_WORKSPACE_MARKER_CONTENT = "devcontainer parity workspace root v1\n"
 FINALIZED_SCRATCH = Path("/Volumes/SSD/cf/finalized-admission")
 FINALIZED_RETAINED = Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library/Application Support/ContainerFamily/retained/devcontainer/finalized-admissions"
+ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+WORKFLOW_RETAINED = ACCOUNT_HOME / "Library/Application Support/ContainerFamily/retained/workflow"
+NATIVE_CANDIDATE_FIXTURES = frozenset({"C03-compose-resources", "D05-features", "E07-init-attachment"})
 
 
 def finalized_selection(args: argparse.Namespace) -> dict[str, Any] | None:
     """Require one complete, explicit signed-package selection."""
 
-    fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state", "expected_source_commit")
+    candidate_invocation = getattr(args, "candidate_invocation", None)
+    fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state")
+    if candidate_invocation is not None:
+        if any(getattr(args, field, None) is not None for field in fields):
+            raise ParityError("candidate and finalized package selections are mutually exclusive")
+        return None
+    fields = (*fields, "expected_source_commit")
     values = {field: getattr(args, field, None) for field in fields}
     if any(value is not None for value in values.values()) and not all(value is not None for value in values.values()):
         raise ParityError("all four finalized package inputs are required together")
     return values if all(value is not None for value in values.values()) else None
+
+
+def candidate_selection(args: argparse.Namespace) -> dict[str, Any] | None:
+    """Select one prepared stock candidate for bounded native diagnostics only."""
+    invocation = getattr(args, "candidate_invocation", None)
+    if invocation is None:
+        return None
+    if not isinstance(invocation, str) or not invocation or len(invocation) > 128:
+        raise ParityError("candidate invocation must be a non-empty retained identifier")
+    source_commit = getattr(args, "expected_source_commit", None)
+    if not isinstance(source_commit, str) or len(source_commit) != 40 or any(
+            character not in "0123456789abcdef" for character in source_commit):
+        raise ParityError("candidate diagnostics require the exact lowercase product source commit")
+    if getattr(args, "lane", None) == "docker":
+        raise ParityError("unsigned candidate diagnostics are native-only")
+    finalized_fields = ("finalized_directory", "finalization_provenance_sha256", "finalization_state")
+    if any(getattr(args, field, None) is not None for field in finalized_fields):
+        raise ParityError("candidate and finalized package selections are mutually exclusive")
+    return {"candidate_invocation": invocation,
+            "expected_source_commit": getattr(args, "expected_source_commit", None)}
+
+
+def validate_candidate_fixture_set(selected: set[str]) -> None:
+    """Reject an unsigned candidate invocation outside the bounded fixture set."""
+    if not selected or not selected.issubset(NATIVE_CANDIDATE_FIXTURES):
+        raise ParityError("unsigned candidate runner accepts only selected C03, D05 or E07 diagnostics")
+
+
+def validate_d05_cache_selection(state: str, lane: str, selected: set[str],
+                                 package_admitted: bool) -> None:
+    """Restrict warmup to one D05 run against an admitted native package."""
+    if state not in {"cold", "warm"}:
+        raise ParityError("D05 cache state must be cold or warm")
+    if state == "warm" and (
+            lane not in {"apple-stock", "container-compose"}
+            or not package_admitted or selected != {"D05-features"}):
+        raise ParityError("D05 warm-cache mode requires only D05-features on an admitted native package")
+
+
+def validate_init_io_trace_selection(enabled: bool, lane: str, selected: set[str],
+                                     package_admitted: bool) -> None:
+    """Restrict init-I/O tracing to one admitted native E07 diagnostic."""
+    if enabled and (
+            lane not in {"apple-stock", "container-compose"}
+            or not package_admitted or selected != {"E07-init-attachment"}):
+        raise ParityError("init-I/O tracing requires only E07 on an admitted native diagnostic")
+
+
+def validate_attachment_generation_selection(generations: int, lane: str, selected: set[str],
+                                            candidate_admitted: bool) -> None:
+    """Allow extended E07 restarts only in the native unsigned-candidate diagnostic."""
+    if type(generations) is not int or generations not in {2, 8}:
+        raise ParityError("attachment generations must be 2 or 8")
+    if generations == 8 and (
+            lane not in {"apple-stock", "container-compose"}
+            or not candidate_admitted or selected != {"E07-init-attachment"}):
+        raise ParityError("eight attachment generations require only E07 on a native candidate diagnostic")
+
+
+def init_io_trace_environment(source: Mapping[str, str], enabled: bool) -> dict[str, str]:
+    """Set trace only from the explicit E07 diagnostic option."""
+    result = dict(source)
+    result.pop("DEVCONTAINER_TRACE_INIT_IO", None)
+    if enabled:
+        result["DEVCONTAINER_TRACE_INIT_IO"] = "1"
+    return result
+
+
+def load_candidate_admitter(repository: Path):
+    """Load the exact source checkout's retained candidate admission helper."""
+    path = repository / "Tools/bazel/prepare_candidate.py"
+    bazel = repository / "Tools/bazel"
+    if str(bazel) not in sys.path:
+        sys.path.insert(0, str(bazel))
+    spec = importlib.util.spec_from_file_location("parity_candidate_admission", path)
+    if spec is None or spec.loader is None:
+        raise ParityError("candidate package admission helper is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != path.resolve(strict=True):
+        raise ParityError("candidate admission helper resolved outside the selected source checkout")
+    return module
 
 
 def load_finalized_admitter(repository: Path):
@@ -86,6 +178,7 @@ def file_sha256(path: Path) -> str:
 
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+    "Tools/parity/feature_cache_diagnostic.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
     "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
     "Tools/parity/e04_build_readiness.py",
@@ -155,7 +248,11 @@ def resolver_nameservers(configuration: str) -> list[str]:
 class LaneRunner:
     """Owns lane processes, commands, evidence, and deterministic cleanup."""
 
-    def __init__(self, lane: str, repository: Path, evidence_root: Path, selection: dict[str, Any] | None = None) -> None:
+    def __init__(self, lane: str, repository: Path, evidence_root: Path,
+                 selection: dict[str, Any] | None = None,
+                 candidate: dict[str, Any] | None = None,
+                 d05_cache_state: str = "cold", trace_init_io: bool = False,
+                 attachment_generations: int = 2) -> None:
         self.lane = lane
         self.repository = repository
         self.output = evidence_root / lane
@@ -177,9 +274,18 @@ class LaneRunner:
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
+        self.harness_repository = Path(__file__).resolve().parents[2]
         self.finalized_selection = selection
+        self.candidate_selection = candidate
+        self.d05_cache_state = d05_cache_state
+        self.trace_init_io = trace_init_io
+        self.attachment_generations = attachment_generations
+        if selection is not None and candidate is not None:
+            raise ParityError("candidate and finalized package selections are mutually exclusive")
         self.finalized: dict[str, Any] | None = None
         self.finalized_identity: dict[str, Any] | None = None
+        self.candidate: dict[str, Any] | None = None
+        self.candidate_identity: dict[str, Any] | None = None
         self.provider_paths: dict[str, str] = {}
         self.provider_hashes: dict[str, str] = {}
         self.harness_sha256: str | None = None
@@ -190,7 +296,7 @@ class LaneRunner:
 
         if self.finalized_selection is None:
             return
-        self.harness_sha256 = parity_harness_sha256(self.repository)
+        self.harness_sha256 = parity_harness_sha256(getattr(self, "harness_repository", self.repository))
         if self.lane != "docker":
             names = ("DEVCONTAINER_CONTAINER_BIN", "DEVCONTAINER_COMPOSE_BIN") if self.lane == "container-compose" else ("DEVCONTAINER_CONTAINER_BIN",)
             for name in names:
@@ -207,7 +313,7 @@ class LaneRunner:
 
         if self.finalized_selection is None:
             return
-        if self.harness_sha256 != parity_harness_sha256(self.repository):
+        if self.harness_sha256 != parity_harness_sha256(getattr(self, "harness_repository", self.repository)):
             raise ParityError("parity harness changed during finalized package run")
         for name, expected in self.provider_hashes.items():
             if os.environ.get(name) != self.provider_paths[name] or file_sha256(Path(self.provider_paths[name])) != expected:
@@ -241,6 +347,75 @@ class LaneRunner:
         elif identity != self.finalized_identity:
             raise ParityError("finalized package identity changed during parity")
 
+    def admit_candidate(self) -> None:
+        """Admit one unsigned schema-2 stock candidate for native diagnostics."""
+        if getattr(self, "candidate_selection", None) is None:
+            return
+        if self.lane == "docker":
+            raise ParityError("unsigned candidate diagnostics are native-only")
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repository, text=True).strip()
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=self.repository, text=True)
+        if head != self.candidate_selection["expected_source_commit"] or status:
+            raise ParityError("candidate product checkout is not clean at its exact source commit")
+        self.harness_sha256 = parity_harness_sha256(self.harness_repository)
+        names = ("DEVCONTAINER_CONTAINER_BIN", "DEVCONTAINER_COMPOSE_BIN") if self.lane == "container-compose" else ("DEVCONTAINER_CONTAINER_BIN",)
+        for name in names:
+            value = os.environ.get(name)
+            path = Path(value) if value else None
+            if path is None or not path.is_absolute() or not path.is_file() or not os.access(path, os.X_OK) or path.resolve() != path:
+                raise ParityError(f"candidate native lane requires an exact qualified {name}")
+            self.provider_paths[name] = str(path)
+            self.provider_hashes[name] = file_sha256(path)
+        self.readmit_candidate(first=True)
+
+    def readmit_candidate(self, *, first: bool = False) -> None:
+        """Re-authenticate retained candidate contents and selected providers."""
+        if getattr(self, "candidate_selection", None) is None:
+            return
+        if self.lane == "docker":
+            raise ParityError("unsigned candidate diagnostics are native-only")
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repository, text=True).strip()
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=self.repository, text=True)
+        if head != self.candidate_selection["expected_source_commit"] or status:
+            raise ParityError("candidate product checkout changed from its exact clean source commit")
+        if self.harness_sha256 != parity_harness_sha256(getattr(self, "harness_repository", self.repository)):
+            raise ParityError("parity harness changed during candidate run")
+        for name, expected in self.provider_hashes.items():
+            if os.environ.get(name) != self.provider_paths[name] or file_sha256(Path(self.provider_paths[name])) != expected:
+                raise ParityError(f"qualified provider changed during parity: {name}")
+        try:
+            admission_module = load_candidate_admitter(self.repository)
+            invocation = self.candidate_selection["candidate_invocation"]
+            receipt, _asset = admission_module.retained_candidate(
+                WORKFLOW_RETAINED / "bazel-evidence.sqlite",
+                invocation, "devcontainer")
+            if (receipt.get("schemaVersion") != 2 or receipt.get("runtimeProfile") != "stock"
+                    or receipt.get("commit") != self.candidate_selection.get("expected_source_commit")):
+                raise ValueError("candidate must be a schema-2 stock package from the exact product source")
+            admission = admission_module.admit_candidate(
+                WORKFLOW_RETAINED,
+                invocation, "stock", "devcontainer")
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise ParityError(f"unsigned candidate admission failed: {error}") from error
+        if admission.get("scope") != "local-candidate-integration-only" or admission.get("sourceCommit") != self.candidate_selection.get("expected_source_commit"):
+            raise ParityError("candidate admission returned an unsupported native scope or source")
+        identity = {key: admission[key] for key in (
+            "scope", "candidateInvocation", "sourceCommit", "runtimeProfile", "assetSHA256",
+            "preparationSHA256", "inventorySHA256", "dependencyLockSHA256", "executables",
+            "terminalLaunchers", "goSDKLicenseSHA256")}
+        identity["candidateReceiptSHA256"] = hashlib.sha256(
+            admission_module.canonical(receipt).encode()).hexdigest()
+        identity["referenceRuntime"] = receipt["referenceRuntime"]
+        if first:
+            self.candidate = admission
+            self.candidate_identity = identity
+        elif identity != self.candidate_identity:
+            raise ParityError("unsigned candidate identity changed during parity")
+
     def package_executable(self, name: str) -> str:
         """Select an admitted signed executable or the development build."""
 
@@ -248,6 +423,10 @@ class LaneRunner:
             if self.finalized is None:
                 raise ParityError("finalized package was not admitted")
             return self.finalized["executables"][name]
+        if getattr(self, "candidate_selection", None) is not None:
+            if self.candidate is None:
+                raise ParityError("unsigned candidate was not admitted")
+            return self.candidate["executables"][name]
         return str(self.repository / ".build" / "debug" / name)
 
     def provider_executable(self, name: str, fallback: str) -> str:
@@ -258,14 +437,16 @@ class LaneRunner:
     def devcontainers_command(self) -> list[str]:
         """Use the signed installation-owned Node and pinned CLI in release mode."""
 
-        if getattr(self, "finalized_selection", None) is not None and self.lane != "docker":
+        if (getattr(self, "finalized_selection", None) is not None or
+                getattr(self, "candidate_selection", None) is not None) and self.lane != "docker":
             return [self.package_executable("devcontainer")]
         return [self.node_package_runner, "--yes", f"@devcontainers/cli@{self.cli_version}"]
 
     def lifecycle_backend_arguments(self) -> list[str]:
         """Select the explicit Docker backend only when the CLI owns backend selection."""
 
-        if self.lane != "docker" and self.finalized_selection is not None:
+        if self.lane != "docker" and (self.finalized_selection is not None
+                                      or getattr(self, "candidate_selection", None) is not None):
             return []
         return ["--docker-path", self.devcontainer_docker]
 
@@ -297,9 +478,10 @@ class LaneRunner:
             validate_engine_fixture_routes(self.manifest)
         except ValueError as error:
             raise ParityError(f"engine fixture route preflight failed: {error}") from error
-        if not self.docker:
+        if not self.docker and getattr(self, "candidate_selection", None) is None:
             raise ParityError("docker CLI is required")
-        if not self.node_package_runner and (self.lane == "docker" or self.finalized_selection is None):
+        if not self.node_package_runner and (self.lane == "docker" or (
+                self.finalized_selection is None and getattr(self, "candidate_selection", None) is None)):
             raise ParityError("npx is required for the pinned @devcontainers/cli")
 
         fixtures = implemented_fixtures(self.repository, self.manifest)
@@ -329,8 +511,22 @@ class LaneRunner:
                 for fixture in fixtures
                 if fixture.identifier in selected
             ]
+        if getattr(self, "candidate_selection", None) is not None:
+            validate_candidate_fixture_set(selected)
+        validate_d05_cache_selection(
+            getattr(self, "d05_cache_state", "cold"), self.lane, selected,
+            self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None)
+        package_admitted = self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None
+        validate_init_io_trace_selection(
+            getattr(self, "trace_init_io", False), self.lane, selected, package_admitted)
+        validate_attachment_generation_selection(
+            getattr(self, "attachment_generations", 2), self.lane, selected,
+            getattr(self, "candidate_selection", None) is not None)
+        self.environment = init_io_trace_environment(
+            getattr(self, "environment", dict(os.environ)), getattr(self, "trace_init_io", False))
 
         self.admit_finalized()
+        self.admit_candidate()
         owned_fixtures = [fixture for fixture in fixtures
                           if ENGINE_FIXTURE_ROUTES.get(fixture.identifier) == "owned_guest"
                           or (self.lane != "docker" and selected == {"E06-network-volume"}
@@ -338,16 +534,30 @@ class LaneRunner:
         native_e04_builder = (self.lane != "docker" and self.finalized_identity is not None
                               and self.finalized_identity.get("runtimeProfile") == "stock"
                               and any(fixture.identifier == "E04-image-build" for fixture in fixtures))
-        if owned_fixtures or native_e04_builder:
+        # Selection and provisioning are distinct: D05/C03 must preserve the
+        # pre-start builder image even when no E04 readiness worker is requested.
+        native_builder_inputs = (self.lane != "docker" and package_admitted and any(
+            fixture.identifier in {"E04-image-build", "C03-compose-resources", "D02-dockerfile-config",
+                                   "D03-users-environment", "D05-features"} for fixture in fixtures))
+        native_d05_cache_preparation = (
+            self.lane != "docker" and getattr(self, "d05_cache_state", "cold") == "warm"
+            and selected == {"D05-features"})
+        native_c03_provider_preparation = (
+            self.lane != "docker" and selected == {"C03-compose-resources"})
+        native_guest_preparation = (owned_fixtures or native_e04_builder
+                                    or native_d05_cache_preparation or native_c03_provider_preparation)
+        if native_guest_preparation:
             from owned_guest_fixture import OwnedGuestFixtureRunner, _retained_root, admit_guest_inputs
 
             retained = _retained_root(self)
             self._owned_guest_inputs = admit_guest_inputs(
-                self.repository, self.lane, retained, builder=native_e04_builder)
+                self.repository, self.lane, retained, builder=native_builder_inputs)
             self._owned_guest_runner = OwnedGuestFixtureRunner(
                 self, owned_fixtures, admitted_inputs=self._owned_guest_inputs,
                 fixture_selection=tuple(fixture.identifier for fixture in fixtures),
-                builder_required=native_e04_builder)
+                builder_required=native_e04_builder,
+                provider_required=(native_d05_cache_preparation or native_c03_provider_preparation),
+                attachment_generations=getattr(self, "attachment_generations", 2))
         if self.output.exists():
             shutil.rmtree(self.output)
         self.output.mkdir(parents=True)
@@ -355,7 +565,7 @@ class LaneRunner:
         e04_readiness_failed = False
         if self.lane == "docker":
             self.configure_docker_oracle()
-        elif owned_fixtures or native_e04_builder:
+        elif native_guest_preparation:
             try:
                 self._owned_guest_runner.prepare_native_provider()
                 if native_e04_builder:
@@ -369,7 +579,7 @@ class LaneRunner:
         if self.lane != "docker" and not native_preparation_failed:
             self.start_engine()
 
-        if (owned_fixtures or native_e04_builder) and not native_preparation_failed:
+        if native_guest_preparation and not native_preparation_failed:
             try:
                 self._owned_guest_runner.attach_endpoint()
                 if self.lane == "docker":
@@ -400,8 +610,10 @@ class LaneRunner:
             else:
                 self.configure_devcontainer_client()
                 native_stock_package = (
-                    self.lane != "docker" and self.finalized_identity is not None
-                    and self.finalized_identity.get("runtimeProfile") == "stock"
+                self.lane != "docker" and (
+                    self.finalized_identity is not None and self.finalized_identity.get("runtimeProfile") == "stock"
+                    or getattr(self, "candidate_identity", None) is not None and self.candidate_identity.get("runtimeProfile") == "stock"
+                )
                 )
                 if self.lane != "apple-stock" and not native_stock_package and not component_terminal_only:
                     self.prepare_builder()
@@ -444,6 +656,7 @@ class LaneRunner:
                         self.stop_engine()
                 finally:
                     self.readmit_finalized()
+                    self.readmit_candidate()
 
         success = (
             all(result["status"] == "passed" for result in results)
@@ -460,6 +673,24 @@ class LaneRunner:
             payload["finalizedPackage"] = self.finalized_identity
             payload["providerBinarySHA256"] = self.provider_hashes
             payload["parityHarnessSHA256"] = self.harness_sha256
+        if getattr(self, "candidate_identity", None) is not None:
+            payload["unsignedCandidate"] = self.candidate_identity
+            payload["providerBinarySHA256"] = self.provider_hashes
+            payload["parityHarnessSHA256"] = self.harness_sha256
+        if getattr(self, "d05_cache_state", "cold") == "warm":
+            payload["d05CacheState"] = "warm"
+            payload["d05FeatureCacheDiagnostic"] = getattr(
+                self, "d05_feature_cache_diagnostic",
+                {"status": "not_comparable", "performanceComparisonEligible": False,
+                 "reason": "D05 functional fixture did not complete"})
+        if getattr(self, "trace_init_io", False):
+            payload["operatorInputs"] = {"traceInitIO": True, "timingClassification": "diagnostic-only"}
+        if getattr(self, "attachment_generations", 2) == 8:
+            payload["operatorInputs"] = {
+                **payload.get("operatorInputs", {}),
+                "attachmentGenerations": 8,
+                "timingClassification": "diagnostic-only",
+            }
         atomic_json(self.output / "results.json", payload)
         write_junit(
             self.output / "junit.xml",
@@ -558,7 +789,7 @@ class LaneRunner:
         """Route official CLI subprocesses through the selected runtime lane."""
 
         self.devcontainer_docker = self.docker
-        identity = getattr(self, "finalized_identity", None)
+        identity = getattr(self, "finalized_identity", None) or getattr(self, "candidate_identity", None)
         if self.lane == "apple-stock" or (
                 self.lane == "container-compose" and identity is not None
                 and identity.get("runtimeProfile") == "stock"):
@@ -931,6 +1162,10 @@ class LaneRunner:
             fingerprints["finalizedPackage"] = self.finalized_identity
             fingerprints["providerBinarySHA256"] = self.provider_hashes
             fingerprints["parityHarnessSHA256"] = self.harness_sha256
+        if getattr(self, "candidate_identity", None) is not None:
+            fingerprints["unsignedCandidate"] = self.candidate_identity
+            fingerprints["providerBinarySHA256"] = self.provider_hashes
+            fingerprints["parityHarnessSHA256"] = self.harness_sha256
         for name, command in commands.items():
             result = subprocess.run(
                 command,
@@ -967,7 +1202,8 @@ class LaneRunner:
             fingerprints["containerDistribution"] = distribution
             if (
                 distribution != "apple"
-                and (self.finalized_selection is not None or os.environ.get("DEVCONTAINER_ALLOW_CUSTOM_STOCK") != "1")
+                and (self.finalized_selection is not None or getattr(self, "candidate_selection", None) is not None
+                     or os.environ.get("DEVCONTAINER_ALLOW_CUSTOM_STOCK") != "1")
             ):
                 raise ParityError(
                     "apple-stock lane requires Apple's stock distribution; "
@@ -982,7 +1218,28 @@ class LaneRunner:
             return self.run_engine_fixture(fixture, raw)
         workspace_root, workspace = self.create_fixture_workspace(fixture)
         runtime_fixture = replace(fixture, directory=workspace)
+        d05_cache_warmup = None
+        d05_cache_warmup_error = None
+        d05_cache_evidence = self.output / "d05-feature-cache"
+        warm_d05 = (getattr(self, "d05_cache_state", "cold") == "warm"
+                    and fixture.identifier == "D05-features")
+        if warm_d05:
+            identity = getattr(self, "finalized_identity", None) or getattr(self, "candidate_identity", None)
+            if identity is None:
+                raise ParityError("D05 warm-cache mode requires an admitted native package")
+            try:
+                d05_cache_warmup = prepare_d05_feature_cache(
+                    lane=self.lane, fixture_id=fixture.identifier, workspace=workspace,
+                    backend_arguments=self.lifecycle_backend_arguments(),
+                    candidate_identity=identity, evidence_dir=d05_cache_evidence,
+                    invoke=lambda argv, timeout: self.devcontainer(list(argv), timeout=timeout))
+            except Exception as error:
+                d05_cache_warmup_error = type(error).__name__
+        functional_started_monotonic_ns = time.monotonic_ns() if warm_d05 else None
         started = time.monotonic()
+        cache_verification_seconds = 0.0
+        up_stdout: str | bytes = ""
+        up_stderr: str | bytes = ""
         status = "failed"
         observations: dict[str, str] = {}
         differences: list[str] = []
@@ -1002,6 +1259,7 @@ class LaneRunner:
                 ],
                 timeout=1800,
             )
+            up_stdout, up_stderr = up.stdout, up.stderr
             (raw / "up.stdout").write_text(up.stdout, encoding="utf-8")
             (raw / "up.stderr").write_text(up.stderr, encoding="utf-8")
             if up.returncode != 0:
@@ -1039,8 +1297,41 @@ class LaneRunner:
             status = "passed"
         except (OSError, ParityError, subprocess.TimeoutExpired) as error:
             diagnostic = str(error)
+            if warm_d05 and isinstance(error, subprocess.TimeoutExpired):
+                up_stdout = error.stdout or ""
+                up_stderr = error.stderr or ""
         finally:
             cleanup = self.cleanup_fixture(runtime_fixture)
+            if warm_d05:
+                verify_started = time.monotonic()
+                if d05_cache_warmup_error is not None:
+                    self.d05_feature_cache_diagnostic = {
+                        "status": "not_comparable", "performanceComparisonEligible": False,
+                        "reason": f"cache warmup failed: {d05_cache_warmup_error}",
+                    }
+                else:
+                    try:
+                        identity = getattr(self, "finalized_identity", None) or getattr(self, "candidate_identity", None)
+                        verification = verify_d05_feature_cache(
+                            lane=self.lane, fixture_id=fixture.identifier, workspace=workspace,
+                            candidate_identity=identity, warmup_receipt=d05_cache_warmup,
+                            functional_started_monotonic_ns=functional_started_monotonic_ns,
+                            up_stdout=up_stdout, up_stderr=up_stderr,
+                            evidence_dir=d05_cache_evidence)
+                        self.d05_feature_cache_diagnostic = {
+                            "status": verification["status"],
+                            "performanceComparisonEligible": verification["performanceComparisonEligible"],
+                            "reason": verification["reason"],
+                            "warmupReceiptSHA256": verification["warmupReceiptSHA256"],
+                            "cacheVerificationSHA256": hashlib.sha256(
+                                (d05_cache_evidence / "cache-verification.json").read_bytes()).hexdigest(),
+                        }
+                    except Exception as error:
+                        self.d05_feature_cache_diagnostic = {
+                            "status": "not_comparable", "performanceComparisonEligible": False,
+                            "reason": f"cache verification failed: {type(error).__name__}",
+                        }
+                cache_verification_seconds = time.monotonic() - verify_started
             workspace_cleanup = self.cleanup_fixture_workspace(workspace_root)
             if workspace_cleanup:
                 cleanup = f"{cleanup}{workspace_cleanup}"
@@ -1051,7 +1342,7 @@ class LaneRunner:
         return {
             "id": fixture.identifier,
             "status": status,
-            "durationSeconds": round(time.monotonic() - started, 3),
+            "durationSeconds": round(time.monotonic() - started - cache_verification_seconds, 3),
             "observations": observations,
             "differences": differences,
             "diagnostic": diagnostic,
@@ -1669,7 +1960,8 @@ class LaneRunner:
                 "DEVCONTAINER_COMPOSE_BIN", shutil.which("container-compose") or "container-compose"
             )
         command_arguments = list(arguments)
-        if self.lane != "docker" and command_arguments and self.finalized_selection is None:
+        if (self.lane != "docker" and command_arguments and self.finalized_selection is None
+                and getattr(self, "candidate_selection", None) is None):
             command_arguments += ["--docker-compose-path", self.package_executable("devcontainer-compose")]
         return subprocess.run(
             [*self.devcontainers_command(), *command_arguments],
@@ -1830,6 +2122,7 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "DEVCONTAINER_PARITY_GUARD",
         "DEVCONTAINER_PARITY_FIXTURES",
         "DEVCONTAINER_TRACE_PROCESS",
+        "DEVCONTAINER_TRACE_INIT_IO",
         "DOCKER_CERT_PATH",
         "DOCKER_CONFIG",
         "DOCKER_CONTEXT",
@@ -1982,16 +2275,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--finalization-provenance-sha256")
     parser.add_argument("--finalization-state", type=Path)
     parser.add_argument("--expected-source-commit")
+    parser.add_argument("--candidate-invocation",
+                        help="prepared unsigned candidate invocation for native diagnostics only")
+    parser.add_argument("--repository", type=Path,
+                        help="product source checkout used for fixtures and source-bound inputs")
+    parser.add_argument("--d05-cache-state", choices=("cold", "warm"), default="cold",
+                        help="run only the D05 native diagnostic and optionally prepare a warm feature cache")
+    parser.add_argument("--trace-init-io", action="store_true",
+                        help="enable payload-free native init I/O counters for an admitted E07-only diagnostic")
+    parser.add_argument("--attachment-generations", type=int, choices=(2, 8), default=2,
+                        help="run 8 E07 init generations only in a native candidate diagnostic (default: 2)")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    repository = Path(__file__).resolve().parents[2]
+    repository = args.repository.resolve(strict=True) if args.repository else Path(__file__).resolve().parents[2]
     evidence = args.evidence.resolve()
     try:
         install_cancellation_handlers()
-        return LaneRunner(args.lane, repository, evidence, finalized_selection(args)).run()
+        return LaneRunner(args.lane, repository, evidence, finalized_selection(args),
+                          candidate_selection(args), args.d05_cache_state, args.trace_init_io,
+                          args.attachment_generations).run()
     except (OSError, ParityError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

@@ -36,8 +36,10 @@ LANES = ("docker", "apple-stock", "container-compose")
 COMPONENT_FIXTURE = "E13-compose-signals"
 COMPONENT_FIXTURES = (COMPONENT_FIXTURE, "E04-image-build", "E06-network-volume", "E07-init-attachment",
                       "E14-compose-terminal-size")
+DIAGNOSTIC_FIXTURES = ("C03-compose-resources", "D05-features", "E07-init-attachment")
 PARITY_HARNESS = (
     "Tools/parity/run_lane.py", "Tools/parity/run_vscode.py",
+    "Tools/parity/feature_cache_diagnostic.py",
     "Tools/parity/compare_results.py", "Tools/parity/parity_lib.py",
     "Tools/parity/engine_fixture_routes.py", "Tools/parity/owned_guest_fixture.py",
     "Tools/parity/e04_build_readiness.py",
@@ -413,11 +415,17 @@ def admit_docker_buildx(path: Path, pins: dict[str, str]) -> tuple[str, str]:
     return version, digest
 
 
-def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup, *, component_fixture=None):
-    """Run the full CLI/V01 pair, or the explicitly scoped CLI component only."""
+def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup, *, component_fixture=None,
+                   diagnostic_fixtures=None):
+    """Run full CLI/V01 suites or an explicitly scoped CLI-only check."""
     cli_result = cli_runner()
     if not cli_cleanup():
         raise RuntimeError("CLI cleanup is incomplete; V01 cannot safely start")
+    if diagnostic_fixtures is not None:
+        if (not diagnostic_fixtures or len(set(diagnostic_fixtures)) != len(diagnostic_fixtures)
+                or any(fixture not in DIAGNOSTIC_FIXTURES for fixture in diagnostic_fixtures)):
+            raise ValueError("Unsupported native diagnostic fixture selection")
+        return cli_result, None, cli_result.returncode == 0
     if component_fixture is not None:
         if component_fixture not in COMPONENT_FIXTURES:
             raise ValueError("Unsupported parity component fixture")
@@ -429,13 +437,144 @@ def run_suite_pair(cli_runner, vscode_runner, cli_cleanup, vscode_cleanup, *, co
     return cli_result, vscode_result, passed
 
 
-def selected_fixture_environment(environment: dict[str, str], fixture: str | None) -> dict[str, str]:
-    """Select one maintained CLI fixture only for the explicit component mode."""
+def selected_fixture_environment(environment: dict[str, str], fixture: str | tuple[str, ...] | None) -> dict[str, str]:
+    """Select only an explicitly admitted fixture set for bounded CLI checks."""
     if fixture is None:
         return environment
-    if fixture not in COMPONENT_FIXTURES:
-        raise ValueError("Unsupported parity component fixture")
-    return {**environment, "DEVCONTAINER_PARITY_FIXTURES": fixture}
+    fixtures = (fixture,) if isinstance(fixture, str) else tuple(fixture)
+    allowed = set(COMPONENT_FIXTURES) | set(DIAGNOSTIC_FIXTURES)
+    if (not fixtures or len(set(fixtures)) != len(fixtures)
+            or any(value not in allowed for value in fixtures)):
+        raise ValueError("Unsupported parity component or diagnostic fixture selection")
+    return {**environment, "DEVCONTAINER_PARITY_FIXTURES": ",".join(fixtures)}
+
+
+def reference_fixture_environment(environment: dict[str, str], fixtures: tuple[str, ...]) -> dict[str, str]:
+    """Select the exact native-only diagnostics without selecting a Docker lane."""
+    if (not fixtures or len(set(fixtures)) != len(fixtures)
+            or any(fixture not in DIAGNOSTIC_FIXTURES for fixture in fixtures)):
+        raise ValueError("Unsupported native diagnostic fixture selection")
+    return {**environment, "DEVCONTAINER_PARITY_FIXTURES": ",".join(fixtures)}
+
+
+def diagnostic_fixture_selection(values: list[str] | None, component_fixture: str | None) -> tuple[str, ...] | None:
+    """Validate the bounded native-only diagnostic fixture set."""
+    if values is None:
+        return None
+    fixtures = tuple(values)
+    if (component_fixture is not None or not fixtures
+            or len(set(fixtures)) != len(fixtures)
+            or any(fixture not in DIAGNOSTIC_FIXTURES for fixture in fixtures)):
+        raise ValueError("Native diagnostic fixtures must be unique, supported, and separate from component mode")
+    return fixtures
+
+
+def validate_d05_cache_request(state: str, diagnostic_fixtures: tuple[str, ...] | None,
+                               component_fixture: str | None) -> None:
+    """Keep warm-cache preparation outside all qualification and multi-fixture paths."""
+    if state not in {"cold", "warm"}:
+        raise ValueError("D05 cache state must be cold or warm")
+    if state == "warm" and (component_fixture is not None
+                            or diagnostic_fixtures != ("D05-features",)):
+        raise ValueError("warm D05 cache mode requires only the D05 native diagnostic")
+
+
+def validate_init_io_trace_request(enabled: bool, diagnostic_fixtures: tuple[str, ...] | None,
+                                   component_fixture: str | None) -> None:
+    """Keep payload-free INIT tracing inside a single native E07 diagnostic."""
+    if enabled and (component_fixture is not None
+                    or diagnostic_fixtures != ("E07-init-attachment",)):
+        raise ValueError("INIT I/O tracing requires only the E07 native diagnostic")
+
+
+def validate_attachment_generation_request(generations: int, candidate_mode: bool,
+                                           diagnostic_fixtures: tuple[str, ...] | None,
+                                           component_fixture: str | None) -> None:
+    """Keep extended attachment restarts inside one unsigned native E07 diagnostic."""
+    if type(generations) is not int or generations not in {2, 8}:
+        raise ValueError("Attachment generations must be 2 or 8")
+    if generations == 8 and (
+            not candidate_mode or component_fixture is not None
+            or diagnostic_fixtures != ("E07-init-attachment",)):
+        raise ValueError("eight attachment generations require only E07 in unsigned candidate diagnostic mode")
+
+
+def validate_package_mode(*, candidate_invocation: str | None,
+                          diagnostic_fixtures: tuple[str, ...] | None,
+                          finalized_values: tuple[object | None, ...]) -> bool:
+    """Keep unsigned candidates inside the native diagnostic path only."""
+    candidate_mode = candidate_invocation is not None
+    if candidate_mode:
+        if not candidate_invocation or diagnostic_fixtures is None or any(
+                value is not None for value in finalized_values):
+            raise ValueError("unsigned candidate mode requires native diagnostic fixtures and excludes finalized inputs")
+    elif any(value is None for value in finalized_values):
+        raise ValueError("signed finalized package inputs are required outside unsigned candidate diagnostics")
+    return candidate_mode
+
+
+def validate_diagnostic_reference(path: Path | None, expected_sha256: str | None) -> dict | None:
+    """Authenticate an optional external Docker reference without importing it into lane results."""
+    if path is None and expected_sha256 is None:
+        return None
+    if path is None or expected_sha256 is None:
+        raise ValueError("A Docker reference requires both its exact file path and trusted SHA-256")
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+        raise ValueError("Docker reference trusted SHA-256 must be a full lowercase digest")
+    if (not path.is_absolute() or path.resolve(strict=True) != path or path.is_symlink()
+            or not path.is_file() or sha256(path) != expected_sha256):
+        raise ValueError("Docker reference file differs from its independently supplied SHA-256")
+    return {"path": str(path), "sha256": expected_sha256, "size": path.stat().st_size}
+
+
+def validate_finalized_package_proof(proof: dict, source_commit: str, state_sha256: str,
+                                     package_admissions: dict) -> None:
+    """Require the exact signed package proof already used by full qualification."""
+    if (not isinstance(proof, dict) or proof.get("sourceCommit") != source_commit
+            or proof.get("trustedStateSHA256") != state_sha256
+            or proof.get("archiveSHA256") != package_admissions.get("apple-stock", {}).get("archiveSHA256")):
+        raise ValueError("finalized package proof differs from the exact accepted archive and source")
+
+
+def tooling_source_identity(controller: Path) -> dict:
+    """Bind diagnostic code to its own clean committed checkout when product source differs."""
+    resolved = controller.resolve(strict=True)
+    repository = Path(subprocess.check_output(
+        ["git", "rev-parse", "--show-toplevel"], cwd=resolved.parent, text=True).strip()).resolve(strict=True)
+    relative = resolved.relative_to(repository).as_posix()
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True).strip()
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=repository, text=True)
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", relative], cwd=repository,
+                             capture_output=True, text=True, check=False)
+    if (status or tracked.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", commit)
+            or not re.fullmatch(r"[0-9a-f]{40}", tree)):
+        raise ValueError("diagnostic tooling checkout must be clean with the controller tracked")
+    return {"repository": str(repository), "commit": commit, "tree": tree,
+            "controllerSHA256": sha256(resolved)}
+
+
+def retain_diagnostic_reference(evidence: Path, reference: dict | None) -> dict | None:
+    """Copy the authenticated reference as a separate input, never as a Docker lane result."""
+    if reference is None:
+        return None
+    directory = evidence / "reference-input"
+    directory.mkdir(mode=0o700)
+    destination = directory / "docker-reference.json"
+    source = Path(reference["path"])
+    if (destination.exists() or destination.is_symlink()
+            or sha256(source) != reference["sha256"]):
+        raise ValueError("Docker reference changed before diagnostic retention")
+    with source.open("rb") as input_stream, destination.open("xb") as output_stream:
+        shutil.copyfileobj(input_stream, output_stream)
+        output_stream.flush()
+        os.fsync(output_stream.fileno())
+    os.chmod(destination, 0o600)
+    if sha256(destination) != reference["sha256"]:
+        raise ValueError("Retained Docker reference bytes differ from the authenticated input")
+    return {"scope": "separate-reference-input", "sha256": reference["sha256"],
+            "size": reference["size"], "retainedPath": str(destination)}
 
 
 def compare_component_results(evidence: Path, fixture: str) -> dict:
@@ -479,7 +618,7 @@ def component_result_payload(args: argparse.Namespace, cleanup: dict, comparison
                              provider_inputs: dict, status: str,
                              failures: list[str]) -> dict:
     """Describe the bounded component run without qualification or publisher authority."""
-    return {
+    payload = {
         "schemaVersion": 1,
         "scope": "component-only",
         "status": status,
@@ -504,6 +643,77 @@ def component_result_payload(args: argparse.Namespace, cleanup: dict, comparison
             "finalServiceSetSHA256", "hostGuardCleared", "restoration")},
         "failures": failures,
     }
+    tooling_identity = getattr(args, "_tooling_identity", None)
+    if tooling_identity is not None:
+        payload["toolingIdentity"] = tooling_identity
+    return payload
+
+
+def diagnostic_result_payload(args: argparse.Namespace, cleanup: dict, host_payload: dict,
+                              provider_inputs: dict, reference: dict | None,
+                              status: str, failures: list[str]) -> dict:
+    """Describe selected native fixtures without claiming comparison or release authority."""
+    candidate_mode = getattr(args, "candidate_invocation", None) is not None
+    package = ({"kind": "unsigned-native-candidate", "signatureVerified": False,
+                "candidateInvocation": args.candidate_invocation,
+                "candidateReceiptSHA256": hashlib.sha256(
+                    json.dumps(args._candidate_receipt, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                "runtimeProfile": args._candidate_receipt["runtimeProfile"],
+                "sourceCommit": args._candidate_receipt["commit"],
+                "archiveSHA256": args._candidate_receipt["archiveSHA256"],
+                "providerAdmissions": args._candidate_admissions} if candidate_mode else
+               {"kind": "signed-notarized-native-package", "signatureVerified": True,
+                "finalizationProvenanceSHA256": args.provenance_sha256,
+                "trustedStateSHA256": args.state_sha256,
+                "archiveSHA256": args._component_package_proof["archiveSHA256"]})
+    payload = {
+        "schemaVersion": 1,
+        "scope": "native-only-fixture-diagnostic",
+        "status": status,
+        "releaseQualified": False,
+        "releaseAuthority": False,
+        "sourceCommit": args.source_commit,
+        "sourceTree": args._source_tree,
+        "productIdentity": {"commit": args.source_commit, "tree": args._source_tree},
+        "toolingIdentity": args._tooling_identity,
+        "parityHarnessSHA256": args._parity_harness_sha256,
+        "package": package,
+        "fixtures": list(args.diagnostic_fixtures),
+        "lanes": ["apple-stock", "container-compose"],
+        "fixtureCounts": {"cliPerLane": len(args.diagnostic_fixtures),
+                           "vscodePerLane": 0, "laneCount": 2,
+                           "totalLaneFixtureResults": 2 * len(args.diagnostic_fixtures)},
+        "dockerOracle": "not-run",
+        "comparison": "not-run",
+        "referenceInput": reference,
+        "providerInputs": provider_inputs,
+        "laneCleanup": {lane: cleanup[lane] for lane in ("apple-stock", "container-compose")},
+        "dockerLaneCleanup": cleanup["docker"],
+        "hostCleanup": {key: host_payload.get(key) for key in (
+            "status", "initialColima", "finalColima", "initialServiceSetSHA256",
+            "finalServiceSetSHA256", "hostGuardCleared", "restoration")},
+        "failures": failures,
+    }
+    if getattr(args, "d05_cache_state", "cold") == "warm":
+        lane_diagnostics = {}
+        for lane in ("apple-stock", "container-compose"):
+            results = json.loads((args.evidence / lane / "results.json").read_text(encoding="utf-8"))
+            lane_diagnostics[lane] = results.get("d05FeatureCacheDiagnostic", {})
+        payload["d05FeatureCacheDiagnostic"] = {
+            "state": "warm",
+            "comparisonEligible": all(
+                item.get("status") == "cache_proven_diagnostic_only"
+                and item.get("performanceComparisonEligible") is True
+                for item in lane_diagnostics.values()),
+            "lanes": lane_diagnostics,
+        }
+    if getattr(args, "attachment_generations", 2) == 8:
+        payload["diagnosticExecution"] = {
+            "attachmentGenerations": 8,
+            "timingClassification": "diagnostic-only",
+            "guardIdentity": args._diagnostic_guard_identity,
+        }
+    return payload
 
 
 def finalize_component_result(args: argparse.Namespace, cleanup: dict, comparison: dict,
@@ -579,6 +789,30 @@ def component_restoration_is_complete(cleanup: dict, host_payload: dict) -> bool
             and host_payload.get("initialColima") == host_payload.get("finalColima")
             and host_payload.get("initialServiceSetSHA256") == host_payload.get("finalServiceSetSHA256")
             and host_payload.get("initialServiceCount") == host_payload.get("finalServiceCount"))
+
+
+def native_diagnostic_restoration_is_complete(cleanup: dict, host_payload: dict) -> bool:
+    """Require both selected native lanes restored and Docker never started."""
+    if (set(cleanup) != set(LANES) or cleanup.get("docker", {}).get("status") != "not-started"
+            or host_payload.get("status") != "restored"
+            or host_payload.get("hostGuardCleared") is not True
+            or host_payload.get("initialColima") != host_payload.get("finalColima")
+            or host_payload.get("initialServiceSetSHA256") != host_payload.get("finalServiceSetSHA256")
+            or host_payload.get("initialServiceCount") != host_payload.get("finalServiceCount")):
+        return False
+    for lane in ("apple-stock", "container-compose"):
+        row = cleanup[lane]
+        if (row.get("status") != "restored" or row.get("cliCleanupComplete") is not True
+                or row.get("vscodeCleanupComplete") is not False
+                or row.get("vscodeStatus") != "skipped"):
+            return False
+    return True
+
+
+def may_continue_native_diagnostic_lane(preflight_passed: bool, cleanup: dict) -> bool:
+    """Continue diagnostics only after a complete, confirmed prior-lane restoration."""
+    return (preflight_passed and cleanup.get("status") == "restored"
+            and cleanup.get("cliCleanupComplete") is True)
 
 
 def host_can_clear_guard(cleanup: dict, initial_colima: str, final_colima: str,
@@ -912,6 +1146,18 @@ def validate_provider_result(path: Path, lane: str, expected: dict[str, str]) ->
         raise RuntimeError(f"{lane} provider bytes in results.json differ from selected executables")
 
 
+def validate_candidate_lane_identity(path: Path, lane: str, admission: dict) -> None:
+    """Bind one native lane result to the exact unsigned candidate admission."""
+    payload = json.loads(path.read_text())
+    actual = payload.get("unsignedCandidate")
+    if (not isinstance(actual, dict)
+            or actual != admission
+            or actual.get("scope") != "local-candidate-integration-only"
+            or actual.get("runtimeProfile") != "stock"
+            or actual.get("sourceCommit") != admission.get("sourceCommit")):
+        raise RuntimeError(f"{lane} result does not bind the admitted unsigned candidate")
+
+
 def native_compose_frontend_environment(args: argparse.Namespace, lane: str) -> dict[str, str]:
     """Select the signed wrapper's separately admitted Compose frontend per native lane."""
     if lane == "apple-stock":
@@ -1149,8 +1395,27 @@ def finalized_args(args: argparse.Namespace) -> list[str]:
 
 def lane_commands(args: argparse.Namespace, lane: str, evidence: Path) -> tuple[list[str], list[str]]:
     """Plan distinct maintained output roots for CLI and V01 runners."""
-    cli = [sys.executable, str(REPOSITORY / "Tools/parity/run_lane.py"), lane,
-           str(evidence), *finalized_args(args)]
+    diagnostic_fixtures = getattr(args, "diagnostic_fixtures", None)
+    runner = (CONTROLLER.parent / "run_lane.py" if diagnostic_fixtures is not None
+              else REPOSITORY / "Tools/parity/run_lane.py")
+    selection_args = (["--candidate-invocation", args.candidate_invocation,
+                       "--expected-source-commit", args.source_commit,
+                       "--repository", str(REPOSITORY)] if getattr(args, "candidate_invocation", None)
+                      else [*finalized_args(args), "--repository", str(REPOSITORY)]
+                      if diagnostic_fixtures is not None else finalized_args(args))
+    cli = [sys.executable, str(runner), lane, str(evidence), *selection_args]
+    if diagnostic_fixtures is not None and getattr(args, "d05_cache_state", "cold") == "warm":
+        cli += ["--d05-cache-state", "warm"]
+    if diagnostic_fixtures is not None and getattr(args, "trace_init_io", False):
+        cli.append("--trace-init-io")
+    generations = getattr(args, "attachment_generations", 2)
+    if generations == 8:
+        validate_attachment_generation_request(
+            generations, getattr(args, "candidate_invocation", None) is not None,
+            diagnostic_fixtures, getattr(args, "component_fixture", None))
+        if lane not in {"apple-stock", "container-compose"}:
+            raise ValueError("eight attachment generations cannot be forwarded to Docker")
+        cli += ["--attachment-generations", "8"]
     vscode = [sys.executable, str(REPOSITORY / "Tools/parity/run_vscode.py"), lane,
               str(evidence / "vscode"), *finalized_args(args)]
     if lane == "docker":
@@ -1199,8 +1464,10 @@ def validate_evidence_root(args: argparse.Namespace,
         if evidence.exists() or evidence.is_symlink():
             raise ValueError("evidence directory must be fresh")
         return
-    if getattr(args, "component_fixture", None) not in COMPONENT_FIXTURES:
-        raise ValueError("existing evidence is permitted only for a supported component recheck")
+    supported_component = getattr(args, "component_fixture", None) in COMPONENT_FIXTURES
+    supported_diagnostic = bool(getattr(args, "diagnostic_fixtures", None))
+    if not supported_component and not supported_diagnostic:
+        raise ValueError("existing evidence is permitted only for a supported component or diagnostic recheck")
     try:
         info = evidence.lstat()
     except FileNotFoundError as error:
@@ -1229,7 +1496,8 @@ def validate_evidence_root(args: argparse.Namespace,
 
 
 def validate_inputs(args: argparse.Namespace, *,
-                    initialized_component_identity: dict | None = None) -> dict[str, str]:
+                    initialized_component_identity: dict | None = None,
+                    candidate_diagnostic: bool = False) -> dict[str, str]:
     manifest_path = args.repository / "Tests/Parity/manifest.json"
     manifest = json.loads(manifest_path.read_text())
     from engine_fixture_routes import validate_engine_fixture_routes
@@ -1289,10 +1557,13 @@ def validate_inputs(args: argparse.Namespace, *,
         if (not path.is_absolute() or path.resolve(strict=True) != path
                 or not path.is_file() or not os.access(path, os.X_OK)):
             raise ValueError(f"{key} must be an executable at a canonical absolute path")
-    for key, path in (("repository", args.repository), ("SSD scratch root", args.ssd_root),
-                      ("retained root", args.retained_root), ("qualification directory", args.qualification_directory),
-                      ("finalized package", args.finalized_directory),
-                      ("accepted state", args.accepted_state)):
+    required_directories = [("repository", args.repository), ("SSD scratch root", args.ssd_root),
+                            ("retained root", args.retained_root),
+                            ("qualification directory", args.qualification_directory)]
+    if not candidate_diagnostic:
+        required_directories.extend((("finalized package", args.finalized_directory),
+                                     ("accepted state", args.accepted_state)))
+    for key, path in required_directories:
         if not path.is_absolute() or path.resolve(strict=True) != path or not path.is_dir():
             raise ValueError(f"{key} must be a canonical absolute directory")
     validate_evidence_root(args, initialized_component_identity)
@@ -1309,19 +1580,20 @@ def validate_inputs(args: argparse.Namespace, *,
         raise ValueError("raw runtime evidence must remain beneath SSD scratch")
     if len(args.source_commit) != 40 or any(c not in "0123456789abcdef" for c in args.source_commit):
         raise ValueError("source commit must be a full lowercase Git SHA")
-    if len(args.provenance_sha256) != 64 or any(c not in "0123456789abcdef" for c in args.provenance_sha256):
-        raise ValueError("provenance SHA must be a full lowercase SHA-256")
-    if len(args.state_sha256) != 64 or any(c not in "0123456789abcdef" for c in args.state_sha256):
-        raise ValueError("accepted-state SHA must be a full lowercase SHA-256")
-    if sha256(args.accepted_state / "state.json") != args.state_sha256:
-        raise ValueError("accepted notary state differs from its independently trusted SHA-256")
-    if expected["dockerCompose"] != "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3":
-        raise ValueError("docker-compose reference binary is not the admitted 5.3.1 bottle")
-    compose_version = run([str(args.docker_compose_bin), "version", "--short"],
-                          env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, timeout=20, capture=True)
-    if compose_version.stdout.strip() != docker_pins.get("composeVersion"):
-        raise ValueError("Docker Compose version differs from the checked-in parity pins")
-    admit_docker_buildx(args.docker_buildx_bin, docker_pins)
+    if not candidate_diagnostic:
+        if len(args.provenance_sha256) != 64 or any(c not in "0123456789abcdef" for c in args.provenance_sha256):
+            raise ValueError("provenance SHA must be a full lowercase SHA-256")
+        if len(args.state_sha256) != 64 or any(c not in "0123456789abcdef" for c in args.state_sha256):
+            raise ValueError("accepted-state SHA must be a full lowercase SHA-256")
+        if sha256(args.accepted_state / "state.json") != args.state_sha256:
+            raise ValueError("accepted notary state differs from its independently trusted SHA-256")
+        if expected["dockerCompose"] != "6c4a20e62f3a776dc7ee603dc296ec63c7194b46067c6461be9208d191c922b3":
+            raise ValueError("docker-compose reference binary is not the admitted 5.3.1 bottle")
+        compose_version = run([str(args.docker_compose_bin), "version", "--short"],
+                              env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"}, timeout=20, capture=True)
+        if compose_version.stdout.strip() != docker_pins.get("composeVersion"):
+            raise ValueError("Docker Compose version differs from the checked-in parity pins")
+        admit_docker_buildx(args.docker_buildx_bin, docker_pins)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=args.repository, text=True).strip()
     status = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], cwd=args.repository, text=True)
     tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=args.repository, text=True).strip()
@@ -1342,18 +1614,29 @@ def validate_inputs(args: argparse.Namespace, *,
     return expected
 
 
+def guest_builder_required(args: argparse.Namespace) -> bool:
+    component = getattr(args, "component_fixture", None)
+    selected = getattr(args, "diagnostic_fixtures", None) or ((component,) if component else None)
+    return selected is None or any(fixture in selected for fixture in (
+        "E04-image-build", "C03-compose-resources", "D02-dockerfile-config",
+        "D03-users-environment", "D05-features"))
+
+
 def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
     """Use the maintained admission API before changing any runtime state."""
     from owned_guest_fixture import preflight_guest_inputs
 
     guest_retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
-    args._guest_input_admissions = {
+    selected_lanes = ("apple-stock", "container-compose") if getattr(args, "diagnostic_fixtures", None) else LANES
+    guest_admissions = {
         lane: preflight_guest_inputs(
             REPOSITORY, lane, guest_retained,
-            builder=(lane != "docker" and (getattr(args, "component_fixture", None) is None
-                                           or args.component_fixture == "E04-image-build")))
-        for lane in ("docker", "apple-stock", "container-compose")
+            builder=(lane != "docker" and guest_builder_required(args)))
+        for lane in selected_lanes
     }
+    if getattr(args, "_guest_input_admissions", guest_admissions) != guest_admissions:
+        raise ValueError("Guest input admission changed during qualification")
+    args._guest_input_admissions = guest_admissions
     admit = load_run_lane(REPOSITORY).load_finalized_admitter(REPOSITORY)
     retained = RETAINED / "finalized-admissions"
     scratch = SSD / "finalized-admission"
@@ -1400,6 +1683,56 @@ def admit_package_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
         raise ValueError("provider lanes did not admit the same finalized archive")
     args._provider_helper_programs = helper_programs
     return results
+
+
+def admit_unsigned_candidate_before_runtime(args: argparse.Namespace) -> dict[str, dict]:
+    """Admit one exact prepared schema-2 stock candidate for native-only diagnostics."""
+    import prepare_candidate
+    from owned_guest_fixture import preflight_guest_inputs
+
+    retained = DEFAULT_WORKFLOW_RETAINED
+    receipt, _asset = prepare_candidate.retained_candidate(
+        retained / "bazel-evidence.sqlite", args.candidate_invocation, "devcontainer")
+    if (receipt.get("schemaVersion") != 2 or receipt.get("runtimeProfile") != "stock"
+            or receipt.get("kind") != "unsigned-native-candidate"
+            or receipt.get("commit") != args.source_commit
+            or receipt.get("distributionReady") is not False):
+        raise ValueError("candidate must be an unsigned schema-2 stock package from the exact product source")
+    admissions = {}
+    for lane in ("apple-stock", "container-compose"):
+        admission = prepare_candidate.admit_candidate(retained, args.candidate_invocation, "stock")
+        if (admission.get("scope") != "local-candidate-integration-only"
+                or admission.get("candidateInvocation") != args.candidate_invocation
+                or admission.get("sourceCommit") != args.source_commit
+                or admission.get("runtimeProfile") != "stock"):
+            raise ValueError(f"{lane} candidate admission returned an unsupported identity")
+        admissions[lane] = admission
+    if (admissions["apple-stock"].get("assetSHA256") != admissions["container-compose"].get("assetSHA256")
+            or admissions["apple-stock"].get("inventorySHA256") != admissions["container-compose"].get("inventorySHA256")):
+        raise ValueError("native providers did not admit the same candidate archive and inventory")
+    receipt_sha = hashlib.sha256(prepare_candidate.canonical(receipt).encode()).hexdigest()
+    for lane, admission in tuple(admissions.items()):
+        admissions[lane] = {key: admission[key] for key in (
+            "scope", "candidateInvocation", "sourceCommit", "runtimeProfile", "assetSHA256",
+            "preparationSHA256", "inventorySHA256", "dependencyLockSHA256", "executables",
+            "terminalLaunchers", "goSDKLicenseSHA256")}
+        admissions[lane]["candidateReceiptSHA256"] = receipt_sha
+        admissions[lane]["referenceRuntime"] = receipt["referenceRuntime"]
+    args._candidate_receipt = receipt
+    args._candidate_admissions = admissions
+    guest_retained = getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED)
+    guest_admissions = {
+        lane: preflight_guest_inputs(REPOSITORY, lane, guest_retained, builder=guest_builder_required(args))
+        for lane in ("apple-stock", "container-compose")
+    }
+    if getattr(args, "_guest_input_admissions", guest_admissions) != guest_admissions:
+        raise ValueError("Guest input admission changed during qualification")
+    args._guest_input_admissions = guest_admissions
+    args._provider_helper_programs = {
+        lane: admit_provider_helper_programs(lane, args)
+        for lane in ("apple-stock", "container-compose")
+    }
+    return admissions
 
 
 def provider_quiescence(runtime, container: Path, environment: dict[str, str], expected_programs: dict) -> dict:
@@ -1537,7 +1870,8 @@ def _finalize_host_cleanup(evidence: Path, args: argparse.Namespace, base_env: d
                     "primaryFailureSHA256", "ownerSHA256", "failureLocation"):
             if key in row:
                 payload[key] = row[key]
-        if getattr(args, "component_fixture", None):
+        if (getattr(args, "component_fixture", None)
+                or getattr(args, "diagnostic_fixtures", None)):
             payload["vscodeStatus"] = "skipped"
         if lane == "docker":
             payload["colima"] = row.get("colima", {"initial": initial_colima,
@@ -1879,6 +2213,19 @@ def preflight_native_providers_before_docker(args: argparse.Namespace, evidence:
     docker_runner()
 
 
+def preflight_selected_runtime_lanes(args: argparse.Namespace, evidence: Path,
+                                     cleanup: dict[str, dict], docker_runner,
+                                     diagnostic_fixtures: tuple[str, ...] | None) -> None:
+    """Keep full qualification ordering while omitting Docker from native diagnostics."""
+    if diagnostic_fixtures is None:
+        preflight_native_providers_before_docker(args, evidence, cleanup, docker_runner)
+        return
+    root = evidence / "native-api-startup-preflight"
+    root.mkdir(mode=0o700, parents=True)
+    for lane in ("apple-stock", "container-compose"):
+        preflight_native_api_startup(args, lane, root, cleanup)
+
+
 def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                base_env: dict[str, str], cleanup: dict[str, dict]) -> None:
     sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
@@ -1920,14 +2267,31 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
 
     def prepare_private_home(journal):
         nonlocal keychain_created
+        inputs = admitted_provider_inputs()
         run_keychain(root, "create", journal)
         keychain_created = True
+        from build_runtime import prepare_provider_configuration
+
+        prepare_provider_configuration(root, owner, inputs, journal)
+
+    def admitted_provider_inputs():
+        from owned_guest_fixture import admit_guest_inputs, guest_input_identity
+
+        inputs = admit_guest_inputs(REPOSITORY, lane,
+                                    getattr(args, "_guest_retained_root", DEFAULT_WORKFLOW_RETAINED),
+                                    builder=guest_builder_required(args))
+        if guest_input_identity(inputs) != args._guest_input_admissions[lane]:
+            raise RuntimeError("Guest input identity changed before provider bootstrap")
+        return inputs
 
     primary_error = None
     startup_failure_row = None
     failure_retention_error = None
     suites_started = False
     try:
+        # Reauthenticate every selected input before the first service mutation;
+        # the quiesced callback checks again before private keychain/config writes.
+        admitted_provider_inputs()
         runtime.start(prepare_home=prepare_private_home)
         api_server_key = "stockAPIServer" if lane == "apple-stock" else "composeAPIServer"
         api_server_sha = args._provider_hashes[api_server_key]
@@ -1952,6 +2316,19 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
             "DEVCONTAINER_API_DEFINITION_SHA256": sha256(root / "selected-apiserver.plist"),
             "DEVCONTAINER_API_SERVER_SHA256": api_server_sha,
         })
+        from build_runtime import verify_provider_configuration
+        configuration_payload = runtime.journal.records()["guest-provider-configuration.toml"]
+        configuration_result = run(
+            [lane_env["DEVCONTAINER_CONTAINER_BIN"], "system", "property", "list", "--format", "json"],
+            env=lane_env, timeout=30, capture=True)
+        effective_configuration = json.loads(configuration_result.stdout)
+        configuration_selection = json.loads(runtime.journal.records()[
+            "guest-provider-configuration-intent.json"])["selected"]
+        configuration_proof = verify_provider_configuration(
+            root, configuration_payload, configuration_selection, effective_configuration)
+        runtime.journal.put("guest-provider-effective-configuration.json", json.dumps(
+            {**configuration_proof, "effective": effective_configuration}, sort_keys=True).encode())
+        runtime.verify()
         provider_started = True
         (evidence / f"{lane}-runtime-initialization.json").write_text(json.dumps(
             {"status": "api-and-helper-ready",
@@ -1961,28 +2338,41 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
                  args._active_provider_runtimes)[lane],
              "providerHelperSHA256": {label: value["sha256"] for label, value in expected_helpers.items()},
              "providerHelperHome": helper_home,
+             "guestProviderConfiguration": configuration_proof,
              "guestImagesAndKernel": "admitted ReleasedGuest provisioning before owned Engine start"},
             sort_keys=True, indent=2) + "\n")
         cli, vscode = lane_commands(args, lane, evidence)
         suites_started = True
+        diagnostic_fixtures = getattr(args, "diagnostic_fixtures", None)
+        component_fixture = getattr(args, "component_fixture", None)
+        cli_only_selection = (diagnostic_fixtures if diagnostic_fixtures is not None
+                              else component_fixture)
         cli_result, vscode_result, suites_passed = run_suite_pair(
-            lambda: command_outcome(cli, env=selected_fixture_environment(
-                                        lane_env, getattr(args, "component_fixture", None)),
+            lambda: command_outcome(cli, env=(reference_fixture_environment(lane_env, diagnostic_fixtures)
+                                              if diagnostic_fixtures is not None
+                                              else selected_fixture_environment(lane_env, component_fixture)),
                                     timeout=3 * 60 * 60,
                                     capture_directory=controller_capture_directory(evidence, lane, "cli")),
             lambda: command_outcome(vscode, env={**lane_env, "DEVCONTAINER_VSCODE_BIN": str(args.vscode_bin),
                                                  "DEVCONTAINER_VSCODE_APP": str(args.vscode_app)}, timeout=90 * 60,
                                     capture_directory=controller_capture_directory(evidence, lane, "vscode")),
-            lambda: cli_cleanup_is_complete(evidence, lane, getattr(args, "component_fixture", None)),
+            lambda: cli_cleanup_is_complete(evidence, lane, component_fixture,
+                                            diagnostic_fixtures=diagnostic_fixtures),
             lambda: vscode_cleanup_is_complete(evidence, lane),
-            component_fixture=getattr(args, "component_fixture", None))
+            component_fixture=component_fixture,
+            diagnostic_fixtures=diagnostic_fixtures)
         runtime.verify()
         if not suites_passed:
             primary_error = RuntimeError(f"{lane} parity command returned a nonzero status")
-        if getattr(args, "component_fixture", None):
+        if cli_only_selection is not None:
             result_path = evidence / lane / "results.json"
-            if cli_result.returncode or json.loads(result_path.read_text()).get("status") != "passed":
-                primary_error = RuntimeError(f"{lane} component fixture did not pass")
+            expected_fixtures = set(diagnostic_fixtures or (component_fixture,))
+            result = json.loads(result_path.read_text())
+            observed_fixtures = {item.get("id") for item in result.get("fixtures", [])
+                                 if isinstance(item, dict)}
+            if (cli_result.returncode or result.get("status") != "passed"
+                    or observed_fixtures != expected_fixtures):
+                primary_error = RuntimeError(f"{lane} selected CLI fixtures did not pass exactly")
         else:
             for suite, command_result, result_path in (
                     ("CLI", cli_result, evidence / lane / "results.json"),
@@ -2002,7 +2392,9 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
         cleanup[lane] = startup_failure_row
         raise primary_error
     component_fixture = getattr(args, "component_fixture", None)
-    complete = lane_cleanup_is_complete(evidence, lane, component_fixture)
+    diagnostic_fixtures = getattr(args, "diagnostic_fixtures", None)
+    complete = lane_cleanup_is_complete(evidence, lane, component_fixture,
+                                        diagnostic_fixtures=diagnostic_fixtures)
     if provider_started and suites_started and not complete:
         cleanup_error = RuntimeError(f"{lane} fixture cleanup is incomplete; preserving active provider and quarantine")
     if runtime.switch is not None and cleanup_error is None:
@@ -2030,17 +2422,20 @@ def apple_lane(args: argparse.Namespace, lane: str, evidence: Path, api: Path,
             cleanup_error = error
         else:
             cleanup[lane] = {"status": "restored",
-                             "cliCleanupComplete": cli_cleanup_is_complete(evidence, lane, component_fixture),
-                             "vscodeCleanupComplete": False if component_fixture else vscode_cleanup_is_complete(evidence, lane),
+                             "cliCleanupComplete": cli_cleanup_is_complete(
+                                 evidence, lane, component_fixture, diagnostic_fixtures=diagnostic_fixtures),
+                             "vscodeCleanupComplete": False if component_fixture or diagnostic_fixtures
+                             else vscode_cleanup_is_complete(evidence, lane),
                              "providerStopped": provider_stopped, "serviceRestored": True,
                              "serviceJournalReceiptSHA256": sha256(evidence / f"{lane}-service-journal-receipt.json")}
-            if component_fixture:
+            if component_fixture or diagnostic_fixtures:
                 cleanup[lane]["vscodeStatus"] = "skipped"
     else:
         cleanup[lane] = {"status": "uncertain", "providerStopped": provider_stopped,
                          "serviceRestored": restored, "scratchRoot": str(root)}
-        if component_fixture:
-            cleanup[lane]["cliCleanupComplete"] = cli_cleanup_is_complete(evidence, lane, component_fixture)
+        if component_fixture or diagnostic_fixtures:
+            cleanup[lane]["cliCleanupComplete"] = cli_cleanup_is_complete(
+                evidence, lane, component_fixture, diagnostic_fixtures=diagnostic_fixtures)
             cleanup[lane]["vscodeCleanupComplete"] = False
             cleanup[lane]["vscodeStatus"] = "skipped"
         cleanup_error = cleanup_error or RuntimeError(f"{lane} restoration is uncertain; guard and scratch retained")
@@ -2060,7 +2455,8 @@ def provider_install_root(lane: str, args: argparse.Namespace) -> Path:
 
 
 def cli_cleanup_is_complete(evidence: Path, lane: str,
-                            component_fixture: str | None = None) -> bool:
+                            component_fixture: str | None = None,
+                            *, diagnostic_fixtures: tuple[str, ...] | None = None) -> bool:
     """Check maintained CLI cleanup independently so V01 can still run after a clean failure."""
     lane_root = evidence / lane
     try:
@@ -2069,7 +2465,14 @@ def cli_cleanup_is_complete(evidence: Path, lane: str,
         manifest = json.loads((REPOSITORY / "Tests/Parity/manifest.json").read_text())
         expected = {item["id"]: item.get("runner") for item in manifest["fixtures"]
                     if item.get("runner") != "vscode" and lane in item.get("backends", [])}
-        if component_fixture is not None:
+        if diagnostic_fixtures is not None:
+            if (component_fixture is not None or not diagnostic_fixtures
+                    or len(set(diagnostic_fixtures)) != len(diagnostic_fixtures)
+                    or any(fixture not in DIAGNOSTIC_FIXTURES for fixture in diagnostic_fixtures)
+                    or not set(diagnostic_fixtures) <= set(expected)):
+                return False
+            expected = {fixture: expected[fixture] for fixture in diagnostic_fixtures}
+        elif component_fixture is not None:
             if component_fixture not in COMPONENT_FIXTURES or component_fixture not in expected:
                 return False
             expected = {component_fixture: expected[component_fixture]}
@@ -2109,9 +2512,11 @@ def vscode_cleanup_is_complete(evidence: Path, lane: str) -> bool:
 
 
 def lane_cleanup_is_complete(evidence: Path, lane: str,
-                             component_fixture: str | None = None) -> bool:
-    if component_fixture is not None:
-        return cli_cleanup_is_complete(evidence, lane, component_fixture)
+                             component_fixture: str | None = None,
+                             *, diagnostic_fixtures: tuple[str, ...] | None = None) -> bool:
+    if component_fixture is not None or diagnostic_fixtures is not None:
+        return cli_cleanup_is_complete(evidence, lane, component_fixture,
+                                       diagnostic_fixtures=diagnostic_fixtures)
     return cli_cleanup_is_complete(evidence, lane) and vscode_cleanup_is_complete(evidence, lane)
 
 
@@ -2243,6 +2648,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--execute", action="store_true", help="perform the live 84-observation campaign")
     parser.add_argument("--component-fixture", choices=COMPONENT_FIXTURES,
                         help="run only the named CLI fixture as a non-qualifying component check")
+    parser.add_argument("--diagnostic-fixture", action="append", choices=DIAGNOSTIC_FIXTURES,
+                        help="run a selected native-only CLI diagnostic fixture; repeat for multiple fixtures")
+    parser.add_argument("--d05-cache-state", choices=("cold", "warm"), default="cold",
+                        help="prepare a D05 feature cache before timing its native diagnostic")
+    parser.add_argument("--trace-init-io", action="store_true",
+                        help="record bounded payload-free INIT stream counters for the E07 native diagnostic")
+    parser.add_argument("--attachment-generations", type=int, choices=(2, 8), default=2,
+                        help="run eight E07 init generations only for an unsigned native candidate diagnostic")
+    parser.add_argument("--docker-reference", type=Path,
+                        help="optional original Docker results file retained separately from diagnostic lane evidence")
+    parser.add_argument("--docker-reference-sha256",
+                        help="independently supplied SHA-256 for --docker-reference")
     parser.add_argument("--repository", type=Path, default=REPOSITORY)
     parser.add_argument("--ssd-root", type=Path, required=True,
                         help="fresh runtime evidence parent on the enrolled SSD")
@@ -2251,10 +2668,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qualification-directory", type=Path, required=True)
     parser.add_argument("--campaign", required=True)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--finalized-directory", required=True, type=Path)
-    parser.add_argument("--provenance-sha256", required=True)
-    parser.add_argument("--state-sha256", required=True)
-    parser.add_argument("--accepted-state", required=True, type=Path)
+    parser.add_argument("--finalized-directory", type=Path)
+    parser.add_argument("--provenance-sha256")
+    parser.add_argument("--state-sha256")
+    parser.add_argument("--accepted-state", type=Path)
+    parser.add_argument("--candidate-invocation",
+                        help="prepared unsigned stock candidate; native diagnostics only")
     parser.add_argument("--docker-bin", required=True, type=Path)
     parser.add_argument("--docker-compose-bin", required=True, type=Path)
     parser.add_argument("--docker-buildx-bin", required=True, type=Path,
@@ -2285,25 +2704,63 @@ def main() -> int:
     JOURNAL_PARENT = RETAINED / "runtime-journals"
     GUARD_PATH = DEFAULT_WORKFLOW_RETAINED / "runtime-admission.json"
     component_fixture = getattr(args, "component_fixture", None)
-    binaries = validate_inputs(args)
-    if not component_fixture and (not args.vscode_app.is_absolute() or args.vscode_app.resolve(strict=True) != args.vscode_app
-                                  or not (args.vscode_app / "Contents/MacOS/Code").is_file()):
+    diagnostic_fixtures = diagnostic_fixture_selection(getattr(args, "diagnostic_fixture", None),
+                                                       component_fixture)
+    args.diagnostic_fixtures = diagnostic_fixtures
+    args.d05_cache_state = getattr(args, "d05_cache_state", "cold")
+    validate_d05_cache_request(args.d05_cache_state, diagnostic_fixtures, component_fixture)
+    args.trace_init_io = getattr(args, "trace_init_io", False)
+    validate_init_io_trace_request(args.trace_init_io, diagnostic_fixtures, component_fixture)
+    finalized_values = (args.finalized_directory, args.provenance_sha256,
+                        args.state_sha256, args.accepted_state)
+    candidate_mode = validate_package_mode(
+        candidate_invocation=getattr(args, "candidate_invocation", None),
+        diagnostic_fixtures=diagnostic_fixtures, finalized_values=finalized_values)
+    args.attachment_generations = getattr(args, "attachment_generations", 2)
+    validate_attachment_generation_request(
+        args.attachment_generations, candidate_mode, diagnostic_fixtures, component_fixture)
+    diagnostic_reference = validate_diagnostic_reference(getattr(args, "docker_reference", None),
+                                                         getattr(args, "docker_reference_sha256", None))
+    if diagnostic_reference is not None and diagnostic_fixtures is None:
+        raise ValueError("A separate Docker reference is supported only with native diagnostic fixtures")
+    args._tooling_identity = tooling_source_identity(CONTROLLER) if diagnostic_fixtures else None
+    if candidate_mode:
+        for source_path in (REPOSITORY / "Tools/parity", REPOSITORY / "Tools/testing", REPOSITORY / "Tools/bazel"):
+            if str(source_path) not in sys.path:
+                sys.path.insert(0, str(source_path))
+    cli_only_mode = component_fixture is not None or diagnostic_fixtures is not None
+    binaries = validate_inputs(args, candidate_diagnostic=candidate_mode)
+    if not cli_only_mode and (not args.vscode_app.is_absolute() or args.vscode_app.resolve(strict=True) != args.vscode_app
+                              or not (args.vscode_app / "Contents/MacOS/Code").is_file()):
         raise ValueError("VS Code app must be the exact staged application bundle")
     manifest = args._manifest
-    if not component_fixture:
+    if not cli_only_mode:
         expected_vsix = manifest["referencePins"]["vscode"]["devContainersExtension"]["vsixSHA256"]
         if (not args.vscode_vsix.is_absolute() or args.vscode_vsix.resolve(strict=True) != args.vscode_vsix
                 or sha256(args.vscode_vsix) != expected_vsix):
             raise ValueError("VSIX must be the exact manifest-pinned retained extension archive")
     if not args.execute:
-        preflight = {"scope": "component-only-inert-preflight", "componentFixture": component_fixture,
+        preflight = {"scope": "native-only-diagnostic-inert-preflight",
+                     "diagnosticFixtures": list(diagnostic_fixtures),
+                     "releaseQualified": False,
+                     "toolingCommit": args._tooling_identity["commit"],
+                     "controllerSHA256": args._tooling_identity["controllerSHA256"],
+                     "packageKind": "unsigned-native-candidate" if candidate_mode else "signed-notarized-native-package",
+                     "referenceSHA256": diagnostic_reference["sha256"] if diagnostic_reference else None,
+                     "traceInitIO": args.trace_init_io,
+                     **({"attachmentGenerations": 8, "timingClassification": "diagnostic-only"}
+                        if args.attachment_generations == 8 else {}),
+                     "providerSHA256": binaries,
+                     "lanes": ["apple-stock", "container-compose"],
+                     "evidence": str(args.evidence)} if diagnostic_fixtures else (
+            {"scope": "component-only-inert-preflight", "componentFixture": component_fixture,
                      "releaseAuthority": False, "sourceCommit": args.source_commit,
                      "providerSHA256": binaries, "lanes": LANES,
                      "evidence": str(args.evidence)} if component_fixture else {
                          "scope": "inert-preflight", "sourceCommit": args.source_commit,
                          "providerSHA256": binaries, "lanes": LANES, "observations": 84,
                          "evidence": str(args.evidence),
-                         "qualificationRoot": str(args.qualification_directory)}
+                         "qualificationRoot": str(args.qualification_directory)})
         print(json.dumps(preflight, sort_keys=True, indent=2))
         return 0
 
@@ -2311,27 +2768,32 @@ def main() -> int:
     # when admission creates a fresh SSD tree against retained receipts.
     os.umask(0o077)
 
-    if component_fixture and (args.evidence.exists() or args.evidence.is_symlink()):
-        raise ValueError("Component evidence root must be fresh")
+    if cli_only_mode and (args.evidence.exists() or args.evidence.is_symlink()):
+        raise ValueError("Component or diagnostic evidence root must be fresh")
 
     require_native_provider_socket_layouts(SSD)
 
     # Exact signed-package admissions precede lease acquisition and any runtime,
     # Colima, launchd, provider or keychain mutation.
-    package_admissions = admit_package_before_runtime(args)
-    prepare_finalized_package = load_finalized_package_helper(REPOSITORY)
-    package_proof, _ = prepare_finalized_package.read_provenance(
-        args.finalized_directory, args.provenance_sha256)
-    if (package_proof.get("sourceCommit") != args.source_commit
-            or package_proof.get("trustedStateSHA256") != args.state_sha256
-            or package_proof.get("archiveSHA256") != package_admissions["apple-stock"]["archiveSHA256"]):
-        raise ValueError("finalized package proof differs from the exact accepted archive and source")
-    if component_fixture:
-        args._component_package_proof = package_proof
-    args._parity_harness_sha256 = load_run_lane(REPOSITORY).parity_harness_sha256(REPOSITORY)
+    if candidate_mode:
+        package_admissions = admit_unsigned_candidate_before_runtime(args)
+        package_proof = None
+    else:
+        package_admissions = admit_package_before_runtime(args)
+        prepare_finalized_package = load_finalized_package_helper(REPOSITORY)
+        package_proof, _ = prepare_finalized_package.read_provenance(
+            args.finalized_directory, args.provenance_sha256)
+        validate_finalized_package_proof(package_proof, args.source_commit, args.state_sha256,
+                                         package_admissions)
+        if cli_only_mode:
+            args._component_package_proof = package_proof
+    harness_repository = CONTROLLER.parents[2] if candidate_mode or diagnostic_fixtures else REPOSITORY
+    args._parity_harness_sha256 = load_run_lane(harness_repository).parity_harness_sha256(harness_repository)
     args._package_admissions = package_admissions
 
     args.evidence.mkdir(parents=True, mode=0o700)
+    retained_reference = retain_diagnostic_reference(args.evidence, diagnostic_reference) \
+        if diagnostic_fixtures else None
     JOURNAL_PARENT.mkdir(parents=True, mode=0o700, exist_ok=True)
     if stat_mode(JOURNAL_PARENT) != 0o700 or stat_mode(GUARD_PATH.parent) != 0o700:
         raise ValueError("private retained journal and guard directories must be mode 0700")
@@ -2350,7 +2812,7 @@ def main() -> int:
                      "DEVCONTAINER_VSCODE_LIVE": "1"})
     docker_config = create_docker_cli_config(args.evidence, args)
     base_env["DOCKER_CONFIG"] = str(docker_config)
-    if not component_fixture:
+    if not cli_only_mode:
         reference = args.evidence / "vscode" / "reference"
         reference.mkdir(parents=True, mode=0o700)
         extension_version = manifest["referencePins"]["vscode"]["devContainersExtension"]["version"]
@@ -2360,9 +2822,12 @@ def main() -> int:
     operator_inputs = {
         "sourceCommit": args.source_commit, "sourceTree": args._source_tree,
         "campaign": args.campaign,
-        "finalizationProvenanceSHA256": args.provenance_sha256,
-        "trustedStateSHA256": args.state_sha256,
-        "archiveSHA256": package_proof["archiveSHA256"],
+        "packageKind": "unsigned-native-candidate" if candidate_mode else "signed-notarized-native-package",
+        "finalizationProvenanceSHA256": None if candidate_mode else args.provenance_sha256,
+        "trustedStateSHA256": None if candidate_mode else args.state_sha256,
+        "archiveSHA256": (args._candidate_receipt["archiveSHA256"] if candidate_mode
+                          else package_proof["archiveSHA256"]),
+        "candidateAdmissions": args._candidate_admissions if candidate_mode else None,
         "packageAdmissions": package_admissions, "providerSHA256": binaries,
         "activeProviderRuntimes": qualification_provider_runtime_identities(
             args._active_provider_runtimes),
@@ -2370,45 +2835,96 @@ def main() -> int:
         "initialColima": initial_colima, "initialColimaDetail": initial_colima_detail,
         "initialServiceSetSHA256": initial_services, "initialServiceCount": initial_service_count,
     }
+    if diagnostic_fixtures:
+        operator_inputs["diagnosticFixtures"] = list(diagnostic_fixtures)
+        operator_inputs["referenceInput"] = retained_reference
+        operator_inputs["toolingIdentity"] = args._tooling_identity
+        operator_inputs["d05CacheState"] = args.d05_cache_state
+        operator_inputs["traceInitIO"] = args.trace_init_io
+        if args.trace_init_io or args.attachment_generations == 8:
+            operator_inputs["timingClassification"] = "diagnostic-only"
+    if args.attachment_generations == 8:
+        operator_inputs["attachmentGenerations"] = 8
     write_json(args.evidence / "operator-inputs.json", operator_inputs)
-    if component_fixture:
+    if cli_only_mode:
         args._component_evidence_identity = capture_component_evidence_identity(
             args.evidence, operator_inputs)
     sys.path.insert(0, str(REPOSITORY / "Tools/testing"))
     from host_runtime import HostGuard, cancellation, runtime_lease
     guard = HostGuard(GUARD_PATH)
-    transaction_owner = {"identity": {"campaign": args.campaign, "sourceCommit": args.source_commit,
-                                      "scope": "finalized-native-parity-component" if component_fixture
-                                      else "finalized-native-parity"}, "root": str(args.evidence)}
+    guard_identity = {"campaign": args.campaign, "sourceCommit": args.source_commit,
+                      "scope": ("unsigned-native-candidate-diagnostic" if candidate_mode
+                                else "finalized-native-parity-diagnostic" if diagnostic_fixtures
+                                else "finalized-native-parity-component" if component_fixture
+                                else "finalized-native-parity")}
+    if candidate_mode:
+        stock_admission = args._candidate_admissions["apple-stock"]
+        guard_identity.update({
+            "candidateInvocation": args.candidate_invocation,
+            "candidateReceiptSHA256": stock_admission["candidateReceiptSHA256"],
+            "archiveSHA256": stock_admission["assetSHA256"],
+            "runtimeProfile": stock_admission["runtimeProfile"],
+            "diagnosticFixtures": sorted(diagnostic_fixtures),
+        })
+    elif diagnostic_fixtures:
+        guard_identity["diagnosticFixtures"] = sorted(diagnostic_fixtures)
+    if args.attachment_generations == 8:
+        guard_identity["attachmentGenerations"] = 8
+    args._diagnostic_guard_identity = dict(guard_identity)
+    transaction_owner = {"identity": guard_identity, "root": str(args.evidence)}
     cleanup = {lane: {"status": "not-started"} for lane in LANES}
     guard_cleared = False
     errors = []
+    native_preflight_passed = False
     with runtime_lease(LEASE_PATH, guard), cancellation():
         guard.begin(transaction_owner)
         try:
             try:
-                preflight_native_providers_before_docker(
+                preflight_selected_runtime_lanes(
                     args, args.evidence, cleanup,
                     lambda: docker_lane(args, args.evidence, endpoint, base_env,
-                                        initial_colima, cleanup))
+                                        initial_colima, cleanup),
+                    diagnostic_fixtures)
+                native_preflight_passed = True
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                errors.append(f"native API preflight / Docker lane: {error}")
-            if cleanup["docker"].get("status") == "restored":
-                for lane, api in (
+                label = "native-only API preflight" if diagnostic_fixtures else "native API preflight / Docker lane"
+                errors.append(f"{label}: {error}")
+            if diagnostic_fixtures:
+                for index, (lane, api) in enumerate((
                     ("apple-stock", args.stock_container_bin.parent / "container-apiserver"),
                     ("container-compose", args.compose_container_bin.parent / "container-apiserver"),
-                ):
-                    if any(cleanup[prior].get("status") != "restored" for prior in LANES[:LANES.index(lane)]):
+                )):
+                    if not native_preflight_passed:
+                        break
+                    if index and not may_continue_native_diagnostic_lane(
+                            native_preflight_passed, cleanup["apple-stock"]):
                         break
                     try:
                         apple_lane(args, lane, args.evidence, api.resolve(strict=True), base_env, cleanup)
                     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                         errors.append(f"{lane}: {error}")
-                        if cleanup[lane].get("status") != "restored":
+                        if not may_continue_native_diagnostic_lane(
+                                native_preflight_passed, cleanup[lane]):
                             break
+            else:
+                if cleanup["docker"].get("status") == "restored":
+                    for lane, api in (
+                        ("apple-stock", args.stock_container_bin.parent / "container-apiserver"),
+                        ("container-compose", args.compose_container_bin.parent / "container-apiserver"),
+                    ):
+                        if any(cleanup[prior].get("status") != "restored" for prior in LANES[:LANES.index(lane)]):
+                            break
+                        try:
+                            apple_lane(args, lane, args.evidence, api.resolve(strict=True), base_env, cleanup)
+                        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                            errors.append(f"{lane}: {error}")
+                            if cleanup[lane].get("status") != "restored":
+                                break
             comparison_status = {}
             component_comparison = {"status": "failed"} if component_fixture else None
-            if component_fixture:
+            if diagnostic_fixtures:
+                comparison_status["diagnostic"] = {"status": "not-run"}
+            elif component_fixture:
                 try:
                     component_comparison = compare_component_results(args.evidence, component_fixture)
                     comparison_status["component"] = {"status": component_comparison.get("status")}
@@ -2455,13 +2971,22 @@ def main() -> int:
             or subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"],
                                        cwd=REPOSITORY, text=True)):
         errors.append("repository source changed during parity execution")
-    if (sha256(args.finalized_directory / "native-finalization-provenance.json") != args.provenance_sha256
-            or sha256(args.accepted_state / "state.json") != args.state_sha256):
+    if candidate_mode:
+        try:
+            final_admissions = admit_unsigned_candidate_before_runtime(args)
+            if final_admissions != package_admissions:
+                errors.append("unsigned candidate admission changed during diagnostic execution")
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+            errors.append(f"unsigned candidate re-admission failed: {error}")
+    elif (sha256(args.finalized_directory / "native-finalization-provenance.json") != args.provenance_sha256
+          or sha256(args.accepted_state / "state.json") != args.state_sha256):
         errors.append("finalized package or accepted state changed during parity execution")
     if not guard_cleared:
         errors.append("runtime guard was not cleared")
-    if not all(cleanup[lane].get("status") == "restored" for lane in LANES):
-        errors.append("one or more runtime lanes were not fully restored")
+    expected_restored_lanes = {"apple-stock", "container-compose"} if diagnostic_fixtures else set(LANES)
+    if (any(cleanup[lane].get("status") != "restored" for lane in expected_restored_lanes)
+            or diagnostic_fixtures and cleanup["docker"].get("status") != "not-started"):
+        errors.append("one or more required runtime lanes were not fully restored")
     try:
         lock = json.loads((args.repository / "Tools/bazel/releases.lock.json").read_bytes())
         final_active = active_provider_runtime_inputs(lock, args._guest_retained_root)
@@ -2470,6 +2995,84 @@ def main() -> int:
             raise ValueError("active provider runtime receipt changed during qualification")
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
         errors.append(f"active provider re-admission failed: {error}")
+    if diagnostic_fixtures:
+        diagnostic_provider_inputs = {}
+        try:
+            final_binaries = validate_inputs(
+                args, initialized_component_identity=args._component_evidence_identity,
+                candidate_diagnostic=candidate_mode)
+            if tooling_source_identity(CONTROLLER) != args._tooling_identity:
+                raise ValueError("diagnostic tooling source or controller changed during the run")
+            if (final_binaries != binaries or args._source_tree != json.loads(
+                    (args.evidence / "operator-inputs.json").read_text())["sourceTree"]):
+                raise ValueError("source or provider inputs changed during diagnostic run")
+            if qualification_provider_runtime_identities(args._active_provider_runtimes) != json.loads(
+                    (args.evidence / "operator-inputs.json").read_text())["activeProviderRuntimes"]:
+                raise ValueError("active provider runtime inputs changed during diagnostic run")
+            final_package_admissions = (admit_unsigned_candidate_before_runtime(args) if candidate_mode
+                                        else admit_package_before_runtime(args))
+            if final_package_admissions != package_admissions:
+                raise ValueError("native package admissions changed during diagnostic run")
+            if not candidate_mode:
+                final_proof, _ = prepare_finalized_package.read_provenance(
+                    args.finalized_directory, args.provenance_sha256)
+                if (final_proof != package_proof
+                        or sha256(args.finalized_directory / "native-finalization-provenance.json")
+                        != args.provenance_sha256
+                        or sha256(args.accepted_state / "state.json") != args.state_sha256):
+                    raise ValueError("finalization provenance or accepted state changed during diagnostic run")
+            if diagnostic_reference is not None:
+                final_reference = validate_diagnostic_reference(
+                    args.docker_reference, args.docker_reference_sha256)
+                retained_path = args.evidence / "reference-input" / "docker-reference.json"
+                if (final_reference != diagnostic_reference
+                        or sha256(retained_path) != diagnostic_reference["sha256"]):
+                    raise ValueError("separate Docker reference input changed during diagnostic run")
+            diagnostic_provider_inputs = {
+                "providerSHA256": final_binaries,
+                "admittedPackageLanes": final_package_admissions,
+                "activeProviderRuntimes": qualification_provider_runtime_identities(
+                    args._active_provider_runtimes),
+                "providerHelperEvidence": args._provider_helper_evidence,
+                "laneEvidenceSHA256": {},
+            }
+            for lane in ("apple-stock", "container-compose"):
+                lane_root = args.evidence / lane
+                validate_provider_result(lane_root / "results.json", lane, final_binaries)
+                validate_provider_fingerprint(lane_root / "fingerprint.json", lane,
+                                              final_binaries, args._manifest,
+                                              args._provider_release_identity)
+                if candidate_mode:
+                    validate_candidate_lane_identity(
+                        lane_root / "results.json", lane, final_package_admissions[lane])
+                    validate_candidate_lane_identity(
+                        lane_root / "fingerprint.json", lane, final_package_admissions[lane])
+                diagnostic_provider_inputs["laneEvidenceSHA256"][lane] = {
+                    "results": sha256(lane_root / "results.json"),
+                    "fingerprint": sha256(lane_root / "fingerprint.json"),
+                }
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+            errors.append(f"diagnostic input recheck failed: {error}")
+        host_payload = json.loads((args.evidence / "host-cleanup.json").read_text())
+        if not native_diagnostic_restoration_is_complete(cleanup, host_payload):
+            errors.append("native diagnostic runtime restoration is incomplete or Docker was started")
+        payload = diagnostic_result_payload(args, cleanup, host_payload,
+                                            diagnostic_provider_inputs, retained_reference,
+                                            "passed" if not errors else "failed", errors)
+        write_json(args.evidence / "diagnostic-result.json", payload)
+        if errors:
+            write_json(args.evidence / "controller-failure.json", {"status": "failed", "errors": errors})
+            print(json.dumps({"status": "failed", "scope": "native-only-fixture-diagnostic",
+                              "evidence": str(args.evidence), "errors": errors}, indent=2),
+                  file=sys.stderr)
+            return 1
+        print(json.dumps({"status": "passed", "scope": "native-only-fixture-diagnostic",
+                          "releaseQualified": False, "diagnosticResult": str(args.evidence / "diagnostic-result.json"),
+                          "sourceCommit": args.source_commit,
+                          "fixtures": list(diagnostic_fixtures), "laneCount": 2},
+                         sort_keys=True, indent=2))
+        return 0
+
     if component_fixture:
         component_comparison = component_comparison or {"status": "failed"}
         component_provider_inputs = {}

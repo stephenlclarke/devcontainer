@@ -89,12 +89,15 @@ def close_write(connection):
             raise
 
 
-def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress: dict | None = None) -> bytes:
+def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress: dict | None = None,
+           output_limit: int | None = None) -> bytes:
     """Drain output while sending input, retaining payload-free socket progress."""
     # These are host-socket observations, not proof that the guest consumed the
     # input. Counts survive timeouts without retaining user payloads in reports.
     if progress is None:
         progress = {}
+    if output_limit is None:
+        output_limit = MAX_OUTPUT
     started = time.monotonic_ns()
     progress.update(inputAcceptedBytes=0, outputWireBytes=len(initial), inputHalfClosed=False, outputEOF=False,
                     firstReadElapsedNS=None, lastReadElapsedNS=None, readOperations=0,
@@ -124,7 +127,7 @@ def duplex(connection, initial: bytes, incoming: bytes, end: float, *, progress:
                     progress["readOperations"] += 1
                     output.extend(chunk)
                     progress["outputWireBytes"] += len(chunk)
-                    if len(output) > MAX_OUTPUT:
+                    if len(output) > output_limit:
                         raise ValueError("Exec output exceeds limit")
                 if mask & selectors.EVENT_WRITE:
                     sent = connection.send(pending[:65536])

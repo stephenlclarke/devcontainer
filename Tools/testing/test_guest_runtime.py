@@ -187,6 +187,43 @@ class GuestRuntimeTests(unittest.TestCase):
             fixture.return_value.cleanup.assert_called_once()
         self.assertEqual(events, ['guest', 'builder'])
 
+    def test_provider_preparation_preloads_admitted_builder_without_starting_worker(self):
+        self.case.fixture = 'E07-init-attachment'
+        self.inputs['builder'] = {'path': '/retained/exact-builder.tar',
+                                  'image': {'reference': 'ghcr.io/example/builder:qualified'}}
+        installed = self.root / 'container/kernels/vmlinux'
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(Path(self.inputs['kernel']['files']['kernel']).read_bytes())
+        (installed.parent / 'default.kernel-arm64').symlink_to(installed)
+        with patch.object(self.case, 'command', return_value=b'ghcr.io/example/builder:qualified\n') as command, \
+                patch('guest_runtime.ReleasedBuilder') as builder:
+            self.case.provision()
+            self.assertEqual([call.args[0] for call in command.call_args_list],
+                             ['guest-kernel', 'guest-initialization', 'guest-workload', 'guest-builder-preload'])
+            self.assertEqual(command.call_args.args[1],
+                             ['image', 'load', '--input', '/retained/exact-builder.tar'])
+            builder.assert_not_called()
+            self.assertIsNone(self.case.builder)
+        self.assertIn('guest-provisioned.json', self.journal.records())
+
+    def test_builder_preload_failure_cannot_publish_guest_preparation_success(self):
+        self.case.fixture = 'E07-init-attachment'
+        self.inputs['builder'] = {'path': '/retained/exact-builder.tar',
+                                  'image': {'reference': 'ghcr.io/example/builder:qualified'}}
+        installed = self.root / 'container/kernels/vmlinux'
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(Path(self.inputs['kernel']['files']['kernel']).read_bytes())
+        (installed.parent / 'default.kernel-arm64').symlink_to(installed)
+        def command(name, _arguments):
+            if name == 'guest-builder-preload':
+                raise ValueError('image import failed')
+        with patch.object(self.case, 'command', side_effect=command), \
+                patch('guest_runtime.ReleasedBuilder') as builder:
+            with self.assertRaisesRegex(ValueError, 'image import failed'):
+                self.case.provision()
+            builder.assert_not_called()
+        self.assertNotIn('guest-provisioned.json', self.journal.records())
+
     def test_c03_provisions_private_builder_without_prebuilding_volume_helper(self):
         self.case.fixture = 'C03-compose-resources'
         self.inputs['builder'] = {'admitted': 'fixture'}
@@ -330,6 +367,32 @@ class GuestRuntimeTests(unittest.TestCase):
         self.assertEqual(i.call_count, 2)
         self.assertEqual(k.call_args.args[2], self.root / "prepared-releases")
 
+    def test_official_stock_guest_versions_require_complete_exact_identity(self):
+        kernel, images = self.locks()
+        current = next(image for image in images["images"] if image["name"] == "stock-vminit")
+        self.assertEqual(current["reference"], "ghcr.io/apple/containerization/vminit:0.47.0")
+        for reference, (manifest, config) in guest_runtime.STOCK_INITIALIZATION_IMAGES.items():
+            selected = copy.deepcopy(images)
+            image = next(item for item in selected["images"] if item["name"] == "stock-vminit")
+            image.update(reference=reference, manifest=manifest, config=config)
+            with self.subTest(reference=reference), \
+                    patch("guest_runtime.require_retained", return_value={}), \
+                    patch("guest_runtime.require_image", side_effect=lambda value, root: {"image": value}):
+                result = admit_guest(kernel, selected, "apple-stock", self.root)
+            self.assertEqual(result["initialization"]["image"], image)
+            for field, value in (("manifest", "sha256:" + "a" * 64),
+                                 ("config", "sha256:" + "b" * 64),
+                                 ("reference", "ghcr.io/apple/containerization/vminit:0.46.0"),
+                                 ("repository", "ghcr.io/other/containerization/vminit")):
+                invalid = copy.deepcopy(selected)
+                next(item for item in invalid["images"] if item["name"] == "stock-vminit")[field] = value
+                with self.subTest(reference=reference, field=field), \
+                        patch("guest_runtime.require_retained") as retained, \
+                        patch("guest_runtime.require_image") as prepared, self.assertRaises(ValueError):
+                    admit_guest(kernel, invalid, "apple-stock", self.root)
+                retained.assert_not_called()
+                prepared.assert_not_called()
+
     def test_missing_enhanced_image_never_falls_back_to_stock_or_mutates_storage(self):
         kernel, images = self.locks()
         images["images"] = [image for image in images["images"] if image["name"] != "enhanced-vminit"]
@@ -341,9 +404,19 @@ class GuestRuntimeTests(unittest.TestCase):
 
     def test_complete_enhanced_admission_selects_only_its_exact_image(self):
         kernel, images = self.locks()
+        image = next(item for item in images["images"] if item["name"] == "enhanced-vminit")
+        provider_images = {
+            "guest": {"reference": image["reference"], "archiveSHA256": image["archiveSHA256"],
+                      "source": image["reference"].rsplit(":", 1)[1]},
+            "builder": {"reference": "ghcr.io/stephenlclarke/container-builder-shim/builder:qualification-"
+                                     + "016040197215684db474181b444767eb58797cfa",
+                        "archiveSHA256": "d" * 64,
+                        "source": "016040197215684db474181b444767eb58797cfa"},
+        }
         with patch("guest_runtime.require_retained", return_value={}), \
                 patch("guest_runtime.require_image", side_effect=lambda image, _: {"image": image}) as selected:
-            result = admit_guest(kernel, images, "container-compose", self.root)
+            result = admit_guest(kernel, images, "container-compose", self.root,
+                                 provider_image_references=provider_images)
         self.assertEqual(result["initialization"]["image"]["name"], "enhanced-vminit")
         self.assertEqual([call.args[0]["name"] for call in selected.call_args_list],
                          ["enhanced-vminit", "alpine-workload"])

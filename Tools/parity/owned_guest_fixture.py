@@ -37,6 +37,9 @@ _ATTACHMENT_DIAGNOSTIC_STREAM_FIELDS = frozenset({
     "inputAcceptedBytes", "inputHalfClosed", "observerInputHalfClosed", "primaryWireBytes",
     "observerWireBytes", "primaryEOF", "observerEOF", "outputWireBytes", "outputEOF",
 })
+_NATIVE_DIAGNOSTIC_FIXTURES = frozenset({
+    "C03-compose-resources", "D05-features", "E07-init-attachment",
+})
 
 
 def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -50,6 +53,9 @@ def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict
         if type(duration) is not int or not 0 <= duration <= 600_000_000_000:
             continue
         item: dict[str, Any] = {"stage": event["stage"], "durationNS": duration}
+        generation = event.get("generation")
+        if type(generation) is int and 1 <= generation <= 8:
+            item["generation"] = generation
         status = event.get("status")
         if type(status) is int and 100 <= status <= 599:
             item["status"] = status
@@ -69,7 +75,7 @@ def _safe_attachment_diagnostic_trace(events: list[dict[str, Any]]) -> list[dict
             if safe_stream:
                 item["stream"] = safe_stream
         trace.append(item)
-        if len(trace) >= 8:
+        if len(trace) >= 32:
             break
     return trace
 
@@ -174,6 +180,21 @@ def _require_private_directory(path: Path, *, create: bool = False) -> None:
         raise ParityError("owned guest storage must be canonical, user-owned and private")
 
 
+def _admitted_package_guest_identity(runner) -> dict[str, Any]:
+    """Carry the package admitted for this guest case without relabeling candidates."""
+    finalized = getattr(runner, "finalized_identity", None)
+    if isinstance(finalized, dict):
+        return {"sourceCommit": finalized.get("sourceCommit"),
+                "archiveSHA256": finalized.get("archiveSHA256")}
+    candidate = getattr(runner, "candidate_identity", None)
+    if isinstance(candidate, dict):
+        return {"sourceCommit": candidate.get("sourceCommit"),
+                "archiveSHA256": candidate.get("assetSHA256"),
+                "candidateInvocation": candidate.get("candidateInvocation"),
+                "candidateReceiptSHA256": candidate.get("candidateReceiptSHA256")}
+    return {"sourceCommit": None, "archiveSHA256": None}
+
+
 def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None = None) -> tuple[Path, dict]:
     """Authenticate the same private HOME used by the active provider API."""
 
@@ -219,14 +240,51 @@ def _active_provider_home(runner, *, fixture_selection: tuple[str, ...] | None =
         ("E06-network-volume",), ("E07-init-attachment",),
         ("E13-compose-signals",), ("E14-compose-terminal-size",), ("E04-image-build",),
     )
-    scope_matches = (scope == "finalized-native-parity" or
-                     (scope == "finalized-native-parity-component" and component_selection))
+    diagnostic_selection = (isinstance(fixture_selection, tuple) and bool(fixture_selection)
+                            and len(set(fixture_selection)) == len(fixture_selection)
+                            and set(fixture_selection) <= _NATIVE_DIAGNOSTIC_FIXTURES)
+    diagnostic_fixtures = sorted(fixture_selection) if diagnostic_selection else None
+    candidate = getattr(runner, "candidate_identity", None)
+    finalized = getattr(runner, "finalized_identity", None)
+    expected_guard_identity = None
+    if scope == "finalized-native-parity":
+        expected_guard_identity = {"campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+                                  "sourceCommit": (finalized or {}).get("sourceCommit"), "scope": scope}
+    elif scope == "finalized-native-parity-component" and component_selection:
+        expected_guard_identity = {"campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+                                  "sourceCommit": (finalized or {}).get("sourceCommit"), "scope": scope}
+    elif scope == "finalized-native-parity-diagnostic" and diagnostic_selection:
+        expected_guard_identity = {
+            "campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+            "sourceCommit": (finalized or {}).get("sourceCommit"), "scope": scope,
+            "diagnosticFixtures": diagnostic_fixtures,
+        }
+    elif scope == "unsigned-native-candidate-diagnostic" and diagnostic_selection:
+        if (isinstance(candidate, dict)
+                and candidate.get("scope") == "local-candidate-integration-only"
+                and candidate.get("runtimeProfile") == "stock"
+                and re.fullmatch(r"[0-9a-f]{40}", str(candidate.get("sourceCommit", "")))
+                and re.fullmatch(r"[0-9a-f]{64}", str(candidate.get("assetSHA256", "")))
+                and re.fullmatch(r"[0-9a-f]{64}", str(candidate.get("candidateReceiptSHA256", "")))
+                and isinstance(candidate.get("candidateInvocation"), str)
+                and candidate.get("candidateInvocation")):
+            expected_guard_identity = {
+                "campaign": guard_identity.get("campaign") if isinstance(guard_identity, dict) else None,
+                "sourceCommit": candidate["sourceCommit"], "scope": scope,
+                "candidateInvocation": candidate["candidateInvocation"],
+                "candidateReceiptSHA256": candidate["candidateReceiptSHA256"],
+                "archiveSHA256": candidate["assetSHA256"],
+                "runtimeProfile": "stock", "diagnosticFixtures": diagnostic_fixtures,
+            }
+            attachment_generations = getattr(runner, "attachment_generations", 2)
+            if attachment_generations == 8 and fixture_selection == ("E07-init-attachment",):
+                expected_guard_identity["attachmentGenerations"] = 8
+            elif attachment_generations != 2:
+                expected_guard_identity = None
     if (not isinstance(guard, dict) or set(guard) != {"identity", "root"}
-            or not isinstance(guard_identity, dict) or set(guard_identity) !=
-            {"campaign", "sourceCommit", "scope"} or
-            not scope_matches or
-            guard_identity.get("sourceCommit") != (runner.finalized_identity or {}).get("sourceCommit") or
-            guard.get("root") != str(runner.output.parent)):
+            or not isinstance(guard_identity, dict) or expected_guard_identity is None
+            or guard_identity != expected_guard_identity
+            or guard.get("root") != str(runner.output.parent)):
         raise ParityError("active provider campaign guard differs from this evidence root")
     expected = {"campaign": guard_identity["campaign"], "lane": runner.lane,
                 "sourceCommit": guard_identity["sourceCommit"]}
@@ -316,7 +374,8 @@ class OwnedGuestFixtureRunner:
     """Own guest image preparation and execute routed fixtures on one active lane."""
 
     def __init__(self, runner, fixtures: list[Any], *, admitted_inputs: dict[str, Any] | None = None,
-                 fixture_selection: tuple[str, ...] | None = None, builder_required: bool = False) -> None:
+                 fixture_selection: tuple[str, ...] | None = None, builder_required: bool = False,
+                 provider_required: bool = False, attachment_generations: int = 2) -> None:
         self.runner = runner
         self.repository = runner.repository
         self.lane = runner.lane
@@ -324,6 +383,15 @@ class OwnedGuestFixtureRunner:
         self.fixture_selection = (fixture_selection if fixture_selection is not None
                                   else tuple(fixture.identifier for fixture in fixtures))
         self.builder_required = builder_required
+        self.provider_required = provider_required
+        self.attachment_generations = attachment_generations
+        if type(attachment_generations) is not int or attachment_generations not in {2, 8}:
+            raise ParityError("attachment generations must be 2 or 8")
+        if attachment_generations == 8 and (
+                runner.lane not in {"apple-stock", "container-compose"}
+                or getattr(runner, "candidate_selection", None) is None
+                or self.fixture_selection != ("E07-init-attachment",)):
+            raise ParityError("eight attachment generations require only E07 on a native candidate diagnostic")
         self.retained = _retained_root(runner)
         self.inputs = (admitted_inputs if admitted_inputs is not None
                        else admit_guest_inputs(self.repository, self.lane, self.retained,
@@ -523,9 +591,8 @@ class OwnedGuestFixtureRunner:
             "campaign": self.runner.output.parent.name,
             "lane": self.lane,
             "fixture": fixture.identifier,
-            "sourceCommit": (self.runner.finalized_identity or {}).get("sourceCommit"),
-            "archiveSHA256": (self.runner.finalized_identity or {}).get("archiveSHA256"),
             "endpointSHA256": hashlib.sha256(str(self.socket).encode()).hexdigest(),
+            **_admitted_package_guest_identity(self.runner),
         }
         owner = {"identity": identity, "root": str(root)}
         owner_bytes = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -584,17 +651,17 @@ class OwnedGuestFixtureRunner:
         first = next((fixture for fixture in self.fixtures
                       if fixture.identifier in OWNED_GUEST_FIXTURES
                       or fixture.identifier == "E06-network-volume"), None)
-        if first is None and not self.builder_required:
+        if first is None and not self.builder_required and not getattr(self, "provider_required", False):
             return
         root, journal, owner = self._case_paths_for_preparation()
         runtime = ApiRuntimeView(self.runner, root, owner, journal, self.fixture_selection)
         self.preparation = (root, journal, runtime, owner)
         runtime.verify()
         before = admit_guest_inputs(self.repository, self.lane, self.retained,
-                                    builder=self.builder_required)
+                                    builder=(self.builder_required or "builder" in self.inputs))
         if guest_input_identity(before) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed before native provisioning")
-        if first is not None or self.builder_required:
+        if first is not None or self.builder_required or getattr(self, "provider_required", False):
             from guest_runtime import ReleasedGuest
 
             preparation_fixture = first.identifier if first is not None else "E07-init-attachment"
@@ -603,7 +670,7 @@ class OwnedGuestFixtureRunner:
             guest.provision()
         runtime.verify()
         after = admit_guest_inputs(self.repository, self.lane, self.retained,
-                                   builder=self.builder_required)
+                                   builder=(self.builder_required or "builder" in self.inputs))
         if guest_input_identity(after) != guest_input_identity(self.inputs):
             raise ParityError("guest input bytes changed during native provisioning")
         self.inputs = after
@@ -704,8 +771,7 @@ class OwnedGuestFixtureRunner:
             _require_private_directory(root, create=True)
             owner = {"identity": {"campaign": self.runner.output.parent.name, "lane": self.lane,
                                   "fixture": "owned-guest-preparation",
-                                  "sourceCommit": (self.runner.finalized_identity or {}).get("sourceCommit"),
-                                  "archiveSHA256": (self.runner.finalized_identity or {}).get("archiveSHA256")},
+                                  **_admitted_package_guest_identity(self.runner)},
                      "root": str(root)}
             owner_bytes = json.dumps(owner, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
             (root / "owner.json").write_bytes(owner_bytes)
@@ -790,7 +856,8 @@ class OwnedGuestFixtureRunner:
         try:
             root, journal, owner = self._case_paths(fixture)
             runtime = LaneRuntimeView(self.runner, journal, self.socket, self.compose,
-                                      tuple(item.identifier for item in self.fixtures))
+                                      getattr(self, "fixture_selection",
+                                              tuple(item.identifier for item in self.fixtures)))
             runtime.verify()
             from guest_runtime import GUEST_API_VERSION, ReleasedGuest
 
@@ -802,6 +869,8 @@ class OwnedGuestFixtureRunner:
             image_id = self.inputs["workload"]["image"].get("manifest") if self.lane == "docker" else None
             guest = ReleasedGuest(inputs, fixture.identifier, root, owner, runtime, self.container,
                                   self.socket, image_id=image_id, observe=events.append,
+                                  attachment_generations=(getattr(self, "attachment_generations", 2)
+                                                          if fixture.identifier == "E07-init-attachment" else 2),
                                   compose_selection=(self._compose_wrapper_selection()
                                                      if fixture.identifier in COMPOSE_FIXTURES else None))
             observations = guest.operation()

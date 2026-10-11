@@ -48,3 +48,21 @@ extension AppleContainerRuntime: RuntimeRecoveryProbe {
         }
     }
 }
+
+extension AppleContainerRuntime: RuntimeContainerCreationProbe {
+    public func requireNoPendingContainerCreation(context: RuntimeRequestContext) async throws {
+        try context.checkActive()
+        guard useDirectContainerAPI else {
+            throw DevContainerError(.unsupportedCapability, message: "Native create intent inspection is unavailable")
+        }
+        let creations = try await requireCreationStore().pendingContainerCreations()
+        guard !creations.contains(where: {
+            $0.spec.labels[RuntimeOperationLabel.key] == context.operationID.rawValue
+        }) else {
+            throw DevContainerError(
+                .conflict,
+                message: "Native container creation remains pending for this request"
+            )
+        }
+    }
+}

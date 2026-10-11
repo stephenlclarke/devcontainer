@@ -1,16 +1,16 @@
 {
-  "archiveSHA256": "7b73a17e5029993dec9f62c4b79df3f3bac580a8f618928ff1db06e93aa0b4d7",
+  "archiveSHA256": "8cd7c78cda5808b196f43ca13ceb5e8a9c88bb93c001d97155acac6b0f4b4b75",
   "asset": "container-sdk-enhanced-darwin-arm64-opt.tar.gz",
   "compiledOutputBEP": {
-    "eventsSHA256": "eb00465aaaf4ff448941bc5793ac2765767639c739f171d2f0fd6db86831944e",
+    "eventsSHA256": "133efc0ae106783f47631b258e85a16b0d04563260159a2033119e3fdba4192c",
     "files": {
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftdoc": {
         "sha256": "b1c237ecc30ea6aee17847a835a48e5f7fdcdd5f596b9c9c24b48722a4e281fb",
         "size": 62900
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerAPIClient.swiftmodule": {
-        "sha256": "f62ced24be56b3590021154629395c7b41feeedc5874aa071d2012b9cd81dad6",
-        "size": 834160
+        "sha256": "45a722e0f2a51ce24caa13d567bae6270ed7540de2d627bfc1074b84ab7cbb84",
+        "size": 834168
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/ContainerBuild.swiftdoc": {
         "sha256": "7f791dea97b92af6acb9fe92e34374daa0ee3b8bd44a70491a89d84fa5a1f797",
@@ -113,12 +113,12 @@
         "size": 512
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libCVersion.rspm_c.lo": {
-        "sha256": "dacff6c3374afb5da48981a3282021239cbaeed40834a14b6f4c4abeac96d8dc",
+        "sha256": "5484dcf80b5cb3cb33b69c1b0a8cedaed7e0739a561ad8597e32972ed4362626",
         "size": 2824
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerAPIClient.rspm.__impl.a": {
-        "sha256": "ac801508dfb7d48426e8e88b7c346ac3d0c3a00675e3709f96010a55cc5b6258",
-        "size": 2806768
+        "sha256": "b6b423fd7b52be32586136f6159319d30381aca5aa4b5a27a59b11cef1f5226f",
+        "size": 2806936
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerBuild.rspm.__impl.a": {
         "sha256": "4bfe5644d0e74eb58c605fa0c9f83d7a89a3638b7a3f10ff8a0e09d7821eed93",
@@ -145,7 +145,7 @@
         "size": 477512
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerResource.rspm.__impl.a": {
-        "sha256": "6846bd9e919481a9dedacebe563b531d3a8e33ad2d535a8d4d5da6ebcbe91bf3",
+        "sha256": "da1c0e4df6ce278d3ea41183794561af450a184beec0edaf350d7546f37c1f26",
         "size": 8742968
       },
       "bazel-out/darwin_arm64-opt-ST-029943333ffa/bin/external/+dependencies+swiftpkg_container/libContainerVersion.rspm.__impl.a": {
@@ -172,8 +172,8 @@
   },
   "configuredRoot": "//:products",
   "developmentProof": false,
-  "evidenceAsset": "qualification.json",
-  "evidenceSHA256": "73d1780040f1a688ff4ac0eacb304ee861af803930da33e13813b1558de46508",
+  "evidenceAsset": "container-sdk-enhanced-qualification.json",
+  "evidenceSHA256": "de93f2b487db88eca19f1e918f06336e052d4a926ba718fa613e79e3cdc3402b",
   "group": "container-sdk",
   "lower": {
     "argument-parser": {
@@ -182,27 +182,27 @@
       "tag": "layer-argument-parser-6a52f3251125-ef5a65929c858802"
     },
     "containerization": {
-      "archiveSHA256": "0329ac5ef7939224b8a159015ae9d4dba11d6a429d6bd53f42857964dee8efe4",
-      "evidenceSHA256": "66219a121210e12b0531ba424ed9f787010cdf308dc8a7c236f203f6c73a9102",
-      "tag": "layer-containerization-enhanced-0329ac5ef7939224b8a1"
+      "archiveSHA256": "bb9fd14d2493c53c8df9d7a1df7e7165c2dfa2f46fb1f4637f501b3b978f46c8",
+      "evidenceSHA256": "8eee0c46f14278c98e944f0c47243ff3e15b703532dc104f976a95c888cfc23d",
+      "tag": "layer-containerization-enhanced-bb9fd14d2493c53c8df9"
     },
     "engine-api": {
-      "archiveSHA256": "ed7e61ef7be42255f487c84dcbb309335e2299dbe393e8aacfec68b6272e9810",
-      "evidenceSHA256": "ff7cddd0d6b308ade6afc074fa347ce8d2e961b20b01d61e0f1ba33a92bff18a",
-      "tag": "layer-engine-api-enhanced-ed7e61ef7be42255f487"
+      "archiveSHA256": "e681c395b29590d9e52b8360fab9943fff361b4d9f2bbecf8a4032d490ad3f32",
+      "evidenceSHA256": "1ecb086f1ffc4cad05a416d58e32e3a7e0a49daed8b9a102cd4590fe6ddbd167",
+      "tag": "layer-engine-api-enhanced-e681c395b29590d9e52b"
     },
     "foundation": {
-      "archiveSHA256": "f4127f90bdf789c726486ae198abef6a1a63ff85cbb36aff75f492f63ea1b133",
-      "evidenceSHA256": "beb4e2d3f13c276449932f69739994ba6e9067cbc62fa9b6c4846d338c6c1b6b",
-      "tag": "layer-foundation-enhanced-f4127f90bdf789c72648"
+      "archiveSHA256": "c3ac95db61f17adc5ca1a32778d3a4d230b4d76dfb57efcca2a0e4c1696abc69",
+      "evidenceSHA256": "71a98e9c02c18de45026a4eef713eced8cfd94dbaf784c7cd5d6e4cad504f579",
+      "tag": "layer-foundation-enhanced-c3ac95db61f17adc5ca1"
     }
   },
-  "producerCommit": "540267971968a87557ed5f6ac99d2e3376c783e2",
+  "producerCommit": "267b8c106968ae55d5efce1b582f25f795e93dd9",
   "profile": "enhanced",
   "reachedSources": {
     "container": {
       "repository": "swiftpkg_container",
-      "sourceCommit": "906014c854a09df4283316289bc755a925f81fe3",
+      "sourceCommit": "38a53cb6ba8f48413534c3c4112f72489ecbecc6",
       "sourceLocation": "https://github.com/stephenlclarke/container.git"
     }
   },
@@ -215,12 +215,12 @@
     "launcher": "fb47bcdd1f485735828a7f8197b343bf246240540acfce77f8074c7f5517c923",
     "moduleGraph": "06c92af722c4fb6af0efd0e575bf6ab3b6f53daabb8b5488286483fd4e1c6c1e",
     "moduleRules": "594a401a02f4d1e25683d030ac6f50b3eefa9ed6e6756eaa13d057d161b057e5",
-    "producer": "4ed29109a7e12926f81ec611c0ebaf9c6acf71b5299ca21f4604edf99dc08ed9",
+    "producer": "d738886033454b9c525a317b28bb25d00ec323c28679ac6c4079e949a40ab8fc",
     "rootBuild": "1fabba720bbaf04748d2848b68d171dc0ebaa82787fa356f6173bd03a1c7fc1c",
     "rulesLicensePatch": "30a1d82c417b5db58cc86c07659285624cf0435635d599cd852a4431a84dd930",
-    "sourceGraphValidator": "1a01895c3e926694255f42c049fbf499958b8332d03a9675b8f1049254379a5e",
+    "sourceGraphValidator": "df1e509f43957d0e72319bca273eea277ba9c0c8c2e3292ac13767c63607f536",
     "sourceIdentity": "be9a72256d0aaee915b348c13d3a4fb7d37857bfeab1b86190fafb8f53f6410f",
-    "swiftPackageManifest": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
+    "swiftPackageManifest": "1453a5acff8ab2cfe05b3237a6ac6cba6620ff793a0e538a0a0e22db3b4365b7",
     "swiftSandboxPatch": "20865f6ec91e3f09a90403e85007cbcf0174c66e0b9fccd1a557b6897309dda2"
   },
   "repository": "stephenlclarke/container",
@@ -245,26 +245,26 @@
   "sourceGraph": {
     "receipt": {
       "argumentParserSource": "6a52f3251125d74daf04fcbd5e6f08a75d074382",
-      "devcontainerLockSHA256": "8a75925150ca36efd92d11767d4d2e4ee68f420361667228ba9abc9ed07c3325",
-      "devcontainerManifestSHA256": "983e37299d3315b8ab836e56444f049ea6acfb67863d9dafbea3f7c1570b33d3",
-      "loadedContainerLockSHA256": "2684e9b3f999c948200e09dccf3eebbeca6e023b0d6569446381c208c5b00edd",
-      "loadedContainerManifestSHA256": "248a5b19dfc068f0882928aa6a69aea4c72753409c18a95b66a0db3a16c26943",
+      "devcontainerLockSHA256": "787451aa6de5ea136749552ef7e79a2b80f5d8f4f99e83d539ea3635c8b83544",
+      "devcontainerManifestSHA256": "1453a5acff8ab2cfe05b3237a6ac6cba6620ff793a0e538a0a0e22db3b4365b7",
+      "loadedContainerLockSHA256": "00de776a267ac09024b0d048253b2703df2db92a9ca46084e05bdea64af0e008",
+      "loadedContainerManifestSHA256": "ef827ef01baec0caa09dd5d6a913642751b3ef2e39bfd47f86afe3f23d7c1928",
       "profile": "enhanced",
       "schema": 1,
       "source": {
-        "container": "906014c854a09df4283316289bc755a925f81fe3",
+        "container": "38a53cb6ba8f48413534c3c4112f72489ecbecc6",
         "container-engine-api": "6e8c932fc8755a4b922fd239426e9029be0554e0",
-        "containerization": "6db16197bbad8196a78132f86529daa89125aafb"
+        "containerization": "c0607ac9aa5b759141506fbd8fc01f423d433f1e"
       },
-      "stockLockSHA256": "c5dc4990e57aae68e649864f7914605a4d374563950b460191eacec46c2c084d"
+      "stockLockSHA256": "24d5a40e2b1535c8d509488b7f7b4f8812863de151c97056b6f7be493e5518fb"
     },
-    "receiptSHA256": "7d4bae4032f6e768a8dba5d21658f5cf371b4207e822788a0efd92f3aa9e54ed"
+    "receiptSHA256": "4ef2438cccd8d5212a59d74bf0c2862a7c38ea9811f2d0b70a8de38fce749c13"
   },
   "sourcePins": {
-    "container": "906014c854a09df4283316289bc755a925f81fe3"
+    "container": "38a53cb6ba8f48413534c3c4112f72489ecbecc6"
   },
-  "tag": "layer-container-sdk-enhanced-7b73a17e5029993dec9f",
-  "targetCommit": "906014c854a09df4283316289bc755a925f81fe3",
+  "tag": "layer-container-sdk-enhanced-8cd7c78cda5808b196f4",
+  "targetCommit": "38a53cb6ba8f48413534c3c4112f72489ecbecc6",
   "toolchain": {
     "bazelVersion": "8.8.0",
     "sdkSettingsSHA256": "7b93ad7e534cc4b31c6a4e39d19b5e0288acf2168c2649479a796d1cb51939fb",
