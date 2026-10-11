@@ -2587,6 +2587,7 @@ def docker_lane(args: argparse.Namespace, evidence: Path, endpoint: str,
              "engineApiVersion": api, "engineCommit": commit,
              "dockerdSHA256": dockerd_hash, "composeVersion": compose_version,
              "buildxVersion": buildx_version, "buildxSHA256": buildx_sha256,
+             "buildKitVersion": pins["buildKitVersion"], "buildKitImage": pins["buildKitImage"],
              "dockerBinarySHA256": sha256(args.docker_bin),
              "dockerComposeSHA256": sha256(args.docker_compose_bin)},
             sort_keys=True, indent=2) + "\n")
