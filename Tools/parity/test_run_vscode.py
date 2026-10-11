@@ -316,10 +316,45 @@ class VSCodeParityTests(unittest.TestCase):
                 filtered = vscode_environment(lane.runtime.environment, root / "filter-check")
                 self.assertNotIn("DEVCONTAINER_BACKEND", filtered)
                 with (mock.patch("run_vscode.subprocess.Popen", return_value=process) as launch,
-                      mock.patch("run_vscode.terminate_isolated_vscode")):
+                      mock.patch("run_vscode.terminate_isolated_vscode") as cleanup):
                     lane.launch(root / "workspace", root / "profile/data", root / "profile/extensions",
                                 root / "driver-state.json", result)
                 self.assertEqual(launch.call_args.kwargs["env"]["DEVCONTAINER_BACKEND"], backend)
+                self.assertEqual(launch.call_args.kwargs["env"]["DEVCONTAINER_VSCODE_DRIVER_ANCHOR"],
+                                 str(root / "profile/anchor"))
+                self.assertTrue((root / "profile/anchor").is_dir())
+                cleanup.assert_called_once_with(root / "profile/data")
+
+    def test_driver_anchor_behavior(self) -> None:
+        driver_tests = Path(__file__).parent / "vscode-driver-extension/test-anchor.js"
+        result = subprocess.run(
+            ["node", "--test", str(driver_tests)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_gui_exit_during_rebuild_remains_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "driver-state.json"
+            state.write_text('{"phase":"rebuilding"}\n', encoding="utf-8")
+            lane = VSCodeLane.__new__(VSCodeLane)
+            lane.lane, lane.repository, lane.output = "container-compose", root, root
+            lane.runtime = mock.Mock(environment={})
+            lane.runtime.provider_executable.return_value = "/pinned/container-compose"
+            lane.vscode_gui = root / "Code"
+            lane.devcontainer_docker_path = mock.Mock(return_value="/pinned/docker")
+            lane.process = None
+            process = mock.Mock(returncode=0)
+            process.poll.return_value = 0
+            with (mock.patch("run_vscode.subprocess.Popen", return_value=process),
+                  mock.patch("run_vscode.terminate_isolated_vscode") as cleanup):
+                self.assertRaisesRegex(
+                    ParityError, "VS Code exited before the parity driver completed",
+                    lane.launch, root / "workspace", root / "profile/data",
+                    root / "profile/extensions", state, root / "driver-result.json",
+                )
+            cleanup.assert_called_once_with(root / "profile/data")
 
     def test_launch_enforces_phase_deadline_after_extension_timer_is_gone(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

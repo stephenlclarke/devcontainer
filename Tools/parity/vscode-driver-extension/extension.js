@@ -12,6 +12,7 @@ const { promisify } = require("node:util");
 const vscode = require("vscode");
 
 const REQUIRED_ENVIRONMENT = [
+  "DEVCONTAINER_VSCODE_DRIVER_ANCHOR",
   "DEVCONTAINER_VSCODE_DRIVER_DOCKER",
   "DEVCONTAINER_VSCODE_DRIVER_RESULT",
   "DEVCONTAINER_VSCODE_DRIVER_STATE",
@@ -66,6 +67,25 @@ function workspaceFolder() {
     throw new Error("the parity workspace is not open");
   }
   return folder;
+}
+
+function isAnchorWindow() {
+  const folders = vscode.workspace.workspaceFolders;
+  return !vscode.env.remoteName &&
+    folders?.length === 1 &&
+    folders[0].uri.scheme === "file" &&
+    folders[0].uri.fsPath === process.env.DEVCONTAINER_VSCODE_DRIVER_ANCHOR;
+}
+
+async function openAnchorWindow() {
+  const anchor = vscode.Uri.file(process.env.DEVCONTAINER_VSCODE_DRIVER_ANCHOR);
+  const opened = await vscode.commands.executeCommand("vscode.openFolder", anchor, {
+    forceNewWindow: true,
+    noRecentEntry: true,
+  });
+  if (opened === false) {
+    throw new Error("could not open the isolated VS Code anchor window");
+  }
 }
 
 function markerURI(name) {
@@ -334,6 +354,7 @@ async function handleFirstAttach() {
     state.observations.vscode_server = true;
   });
   await recordEvent("first-attach", { externalURI, firstContainerID });
+  await openAnchorWindow();
   await launchTransition(
     "rebuilding",
     "remote-containers.rebuildContainer",
@@ -389,6 +410,9 @@ async function run() {
   if (missing.length) {
     throw new Error(`missing driver environment: ${missing.join(", ")}`);
   }
+  if (isAnchorWindow()) {
+    return;
+  }
   await activateDevContainersExtension();
   const state = await readJSON(process.env.DEVCONTAINER_VSCODE_DRIVER_STATE);
 
@@ -429,4 +453,4 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, _test: { isAnchorWindow, openAnchorWindow, run } };
