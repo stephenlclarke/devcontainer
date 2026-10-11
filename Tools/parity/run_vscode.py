@@ -951,6 +951,7 @@ class VSCodeLane:
             )
         environment.update(
             {
+                "DEVCONTAINER_VSCODE_DRIVER_ANCHOR": str(user_data.parent / "anchor"),
                 "DEVCONTAINER_VSCODE_DRIVER_BACKEND": self.lane,
                 "DEVCONTAINER_VSCODE_DRIVER_DOCKER": self.devcontainer_docker_path(),
                 "DEVCONTAINER_VSCODE_DRIVER_PORT": "8123",
@@ -962,6 +963,7 @@ class VSCodeLane:
                 "DEVCONTAINER_VSCODE_DRIVER_WORKSPACE": str(workspace),
             }
         )
+        (user_data.parent / "anchor").mkdir(mode=0o700)
         stdout = (self.output / "code.stdout.log").open("wb")
         stderr = (self.output / "code.stderr.log").open("wb")
         try:
