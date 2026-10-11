@@ -71,6 +71,15 @@ class ValidateManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ManifestError, "docker.buildxVersion"):
             validate_manifest(payload)
 
+    def test_docker_buildkit_arm64_image_and_version_are_immutable(self) -> None:
+        for field, changed in (("buildKitImage", "moby/buildkit:v0.30.0"),
+                               ("buildKitVersion", "v0.31.0")):
+            with self.subTest(field=field):
+                payload = copy.deepcopy(self.payload)
+                payload["referencePins"]["docker"][field] = changed
+                with self.assertRaisesRegex(ManifestError, "verified arm64 BuildKit"):
+                    validate_manifest(payload)
+
     def test_devcontainers_cli_commit_is_required(self) -> None:
         payload = copy.deepcopy(self.payload)
         payload["referencePins"]["devcontainersCli"]["commit"] = "not-a-commit"

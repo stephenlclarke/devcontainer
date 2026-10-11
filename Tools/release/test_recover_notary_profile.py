@@ -20,7 +20,8 @@ from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("recover_notary_profile.py")
 SPEC = importlib.util.spec_from_file_location("recover_notary_profile", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
+assert SPEC is not None
+assert SPEC.loader is not None
 recovery = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(recovery)
 

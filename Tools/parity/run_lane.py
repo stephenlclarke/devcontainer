@@ -14,6 +14,7 @@ import json
 import os
 import platform
 import pwd
+import secrets
 import shlex
 import shutil
 import signal
@@ -271,6 +272,7 @@ class LaneRunner:
         self.engine_log: Any | None = None
         self.builder_name: str | None = None
         self.builder_container_ids: set[str] = set()
+        self.docker_builder_identity: dict[str, str] | None = None
         self.cleanup_differences: list[str] = []
         self.socket_root: Path | None = None
         self.environment = safe_environment(os.environ)
@@ -878,25 +880,7 @@ class LaneRunner:
 
     def prepare_builder(self) -> None:
         if self.lane == "docker":
-            self.environment["BUILDX_BUILDER"] = "default"
-            bootstrap = subprocess.run(
-                [self.docker, "buildx", "inspect", "--bootstrap", "default"],
-                cwd=self.repository,
-                env=self.environment,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=300,
-            )
-            (self.output / "buildx-bootstrap.log").write_text(
-                bootstrap.stdout + bootstrap.stderr,
-                encoding="utf-8",
-            )
-            if bootstrap.returncode != 0:
-                raise ParityError(
-                    "Docker daemon-integrated BuildKit did not become ready: "
-                    f"{bootstrap.stderr.strip()}"
-                )
+            self.prepare_docker_builder()
             return
 
         before = self.docker_container_inventory()
@@ -970,8 +954,109 @@ class LaneRunner:
                 "isolated buildx builder did not expose a dedicated container"
             )
 
+    def docker_builder_resource(self, kind: str, name: str) -> dict[str, Any] | None:
+        """Inspect one exact Docker builder resource without listing unrelated resources."""
+
+        result = subprocess.run(
+            [self.docker, kind, "inspect", name, "--format", "{{json .}}"],
+            cwd=self.repository, env=self.environment, capture_output=True,
+            text=True, check=False, timeout=30,
+        )
+        if result.returncode != 0:
+            if "no such" in result.stderr.lower() or "not found" in result.stderr.lower():
+                return None
+            raise ParityError(f"cannot inspect exact Docker builder {kind}: {result.stderr.strip()}")
+        try:
+            value = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise ParityError(f"invalid exact Docker builder {kind} inspection") from error
+        if not isinstance(value, dict):
+            raise ParityError(f"invalid exact Docker builder {kind} inspection")
+        return value
+
+    @staticmethod
+    def require_docker_builder_ownership(container: dict[str, Any] | None,
+                                         volume: dict[str, Any] | None,
+                                         identity: dict[str, str]) -> None:
+        """Match one owned builder container to its named local cache volume."""
+
+        if container is not None and (
+                container.get("Name") != f"/{identity['containerName']}"
+                or not isinstance(container.get("Config"), dict)
+                or container["Config"].get("Image") != identity["image"]
+                or not isinstance(container.get("Id"), str)
+                or ("containerID" in identity and container["Id"] != identity["containerID"])
+                or not isinstance(container.get("Mounts"), list)
+                or not any(isinstance(mount, dict)
+                           and mount.get("Type") == "volume"
+                           and mount.get("Name") == identity["volumeName"]
+                           and mount.get("Destination") == "/var/lib/buildkit"
+                           for mount in container.get("Mounts", []))):
+            raise ParityError("Docker builder container ownership changed before cleanup")
+        if volume is not None and (
+                volume.get("Name") != identity["volumeName"]
+                or volume.get("Driver") != "local"
+                or not isinstance(volume.get("CreatedAt"), str)
+                or not volume["CreatedAt"]
+                or ("volumeCreatedAt" in identity
+                    and volume["CreatedAt"] != identity["volumeCreatedAt"])):
+            raise ParityError("Docker builder volume ownership changed before cleanup")
+
+    def prepare_docker_builder(self) -> None:
+        """Create a fresh BuildKit cache owned by this Docker parity campaign."""
+
+        pins = self.manifest["referencePins"]["docker"]
+        name = f"devcontainer-parity-docker-{secrets.token_hex(12)}"
+        container_name = f"buildx_buildkit_{name}0"
+        volume_name = f"{container_name}_state"
+        config = Path(self.environment["DOCKER_CONFIG"]) / "buildx" / "instances" / name
+        if (config.exists() or config.is_symlink()
+                or self.docker_builder_resource("container", container_name) is not None
+                or self.docker_builder_resource("volume", volume_name) is not None):
+            raise ParityError("fresh Docker builder name already has resources")
+        self.builder_name = name
+        self.docker_builder_identity = {
+            "name": name, "containerName": container_name, "volumeName": volume_name,
+            "image": pins["buildKitImage"], "version": pins["buildKitVersion"],
+            "cacheScope": "fresh-campaign-docker-container",
+        }
+        atomic_json(self.output / "buildx-ownership-intent.json", self.docker_builder_identity)
+        create = subprocess.run(
+            [self.docker, "buildx", "create", "--name", name, "--driver", "docker-container",
+             "--driver-opt", f"image={pins['buildKitImage']}",
+             "--driver-opt", "restart-policy=no"],
+            cwd=self.repository, env=self.environment, capture_output=True,
+            text=True, check=False, timeout=120,
+        )
+        (self.output / "buildx-create.log").write_text(create.stdout + create.stderr, encoding="utf-8")
+        if create.returncode != 0 or create.stdout.strip() != name:
+            raise ParityError("cannot create exact fresh Docker BuildKit builder")
+        self.environment["BUILDX_BUILDER"] = name
+        bootstrap = subprocess.run(
+            [self.docker, "buildx", "inspect", "--bootstrap", name],
+            cwd=self.repository, env=self.environment, capture_output=True,
+            text=True, check=False, timeout=300,
+        )
+        (self.output / "buildx-bootstrap.log").write_text(
+            bootstrap.stdout + bootstrap.stderr, encoding="utf-8")
+        if (bootstrap.returncode != 0
+                or f"BuildKit version: {pins['buildKitVersion']}" not in bootstrap.stdout):
+            raise ParityError("fresh Docker BuildKit builder did not report its pinned version")
+        container = self.docker_builder_resource("container", container_name)
+        volume = self.docker_builder_resource("volume", volume_name)
+        self.require_docker_builder_ownership(container, volume, self.docker_builder_identity)
+        if container is None or volume is None:
+            raise ParityError("fresh Docker builder container, image or cache volume differs")
+        self.builder_container_ids = {container["Id"]}
+        self.docker_builder_identity["containerID"] = container["Id"]
+        self.docker_builder_identity["volumeCreatedAt"] = volume["CreatedAt"]
+        atomic_json(self.output / "buildx-ownership.json", self.docker_builder_identity)
+
     def stop_builder(self) -> None:
         if self.builder_name is None or not self.docker:
+            return
+        if getattr(self, "lane", None) == "docker":
+            self.stop_docker_builder()
             return
         builder_name = self.builder_name
         result = subprocess.run(
@@ -1026,6 +1111,67 @@ class LaneRunner:
             self.cleanup_differences.append(diagnostic)
         self.builder_name = None
         self.builder_container_ids = set()
+
+    def stop_docker_builder(self) -> None:
+        """Remove only the nonce-bound builder and its exact cache volume."""
+
+        identity = self.docker_builder_identity
+        if identity is None or self.builder_name != identity["name"]:
+            self.cleanup_differences.append("Docker builder ownership intent is missing")
+            return
+        container_name = identity["containerName"]
+        volume_name = identity["volumeName"]
+        cleanup = {"builder": dict(identity), "status": "uncertain"}
+        try:
+            container = self.docker_builder_resource("container", container_name)
+            volume = self.docker_builder_resource("volume", volume_name)
+            self.require_docker_builder_ownership(container, volume, identity)
+            config = Path(self.environment["DOCKER_CONFIG"]) / "buildx" / "instances" / identity["name"]
+            if config.exists() or config.is_symlink():
+                result = subprocess.run(
+                    [self.docker, "buildx", "rm", "--force", identity["name"]],
+                    cwd=self.repository, env=self.environment, capture_output=True,
+                    text=True, check=False, timeout=120,
+                )
+                (self.output / "buildx-remove.log").write_text(
+                    result.stdout + result.stderr, encoding="utf-8")
+                if result.returncode != 0:
+                    raise ParityError("exact Docker buildx rm failed")
+            if container is not None and self.docker_builder_resource("container", container_name) is not None:
+                result = subprocess.run(
+                    [self.docker, "rm", "-f", container["Id"]],
+                    cwd=self.repository, env=self.environment, capture_output=True,
+                    text=True, check=False, timeout=120,
+                )
+                if result.returncode != 0:
+                    raise ParityError("exact Docker builder container removal failed")
+            current_volume = self.docker_builder_resource("volume", volume_name)
+            if volume is not None and current_volume is not None:
+                self.require_docker_builder_ownership(None, current_volume, identity)
+                result = subprocess.run(
+                    [self.docker, "volume", "rm", volume_name],
+                    cwd=self.repository, env=self.environment, capture_output=True,
+                    text=True, check=False, timeout=120,
+                )
+                if result.returncode != 0:
+                    raise ParityError("exact Docker builder cache volume removal failed")
+            if (self.docker_builder_resource("container", container_name) is not None
+                    or self.docker_builder_resource("volume", volume_name) is not None
+                    or config.exists() or config.is_symlink()):
+                raise ParityError("exact Docker builder or cache volume survived cleanup")
+        except (OSError, ParityError, subprocess.TimeoutExpired) as error:
+            self.cleanup_differences.append(f"Docker builder cleanup is uncertain: {error}")
+            cleanup["reason"] = str(error)
+            atomic_json(self.output / "buildx-cleanup.json", cleanup)
+            return
+        cleanup["status"] = "restored"
+        cleanup["containerAbsent"] = True
+        cleanup["volumeAbsent"] = True
+        cleanup["configAbsent"] = True
+        atomic_json(self.output / "buildx-cleanup.json", cleanup)
+        self.builder_name = None
+        self.builder_container_ids = set()
+        self.docker_builder_identity = None
 
     def docker_container_inventory(self) -> set[str]:
         """Return the exact container IDs visible through the selected lane."""
@@ -1166,6 +1312,8 @@ class LaneRunner:
             fingerprints["unsignedCandidate"] = self.candidate_identity
             fingerprints["providerBinarySHA256"] = self.provider_hashes
             fingerprints["parityHarnessSHA256"] = self.harness_sha256
+        if self.lane == "docker" and getattr(self, "docker_builder_identity", None) is not None:
+            fingerprints["dockerBuildKit"] = dict(self.docker_builder_identity)
         for name, command in commands.items():
             result = subprocess.run(
                 command,

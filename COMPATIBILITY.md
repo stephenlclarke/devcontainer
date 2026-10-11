@@ -299,6 +299,8 @@ oracle within the claimed surface.
 
 Each lane records monotonic fixture wall time in its JSON and JUnit evidence. The aggregate matrix reports candidate/Docker ratios for each matching fixture. Comparable or better performance (`<=1.00x` Docker) is the objective. A completed result above `2.50x` Docker requires further investigation but does not, by itself, alter functional parity. A timeout, other non-completion, or missing or invalid timing evidence fails the gate and is never retried or normalized away. The complete performance objective and investigation policy are in [`PARITY-ROADMAP.md`](PARITY-ROADMAP.md).
 
+The Docker oracle's Buildx layer cache is now scoped to one qualification campaign through a fresh, pinned `docker-container` builder. Builds within that campaign retain normal caching; the harness never prunes the shared daemon cache. The D05 failure from the earlier campaign compared cached Docker Feature installers with uncached native installers and remains a failed timing result. D06's local-image versus native-pull difference is separate and remains visible in raw timings.
+
 The harness may normalize only:
 
 - stable symbolic resource identifiers;

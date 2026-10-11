@@ -1087,6 +1087,26 @@ class FingerprintTests(unittest.TestCase):
             ["/usr/bin/npx", "--yes", "@devcontainers/cli@0.88.0", "--version"],
         )
 
+    def test_docker_fingerprint_binds_fresh_builder_and_cache(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.lane = "docker"
+        runner.docker = "/usr/bin/docker"
+        runner.node_package_runner = "/usr/bin/npx"
+        runner.cli_version = "0.88.0"
+        runner.cli_reference = {"version": "0.88.0"}
+        runner.repository = Path("/repository")
+        runner.environment = {}
+        runner.docker_builder_identity = {
+            "name": "fresh-builder", "containerID": "owned-id",
+            "volumeName": "fresh-cache", "image": "moby/buildkit@sha256:" + "a" * 64,
+        }
+        with (mock.patch("run_lane.platform.machine", return_value="arm64"),
+              mock.patch("run_lane.platform.platform", return_value="macOS-27-arm64"),
+              mock.patch("run_lane.subprocess.run", return_value=mock.Mock(
+                  returncode=0, stdout="version", stderr=""))):
+            fingerprint = runner.fingerprint()
+        self.assertEqual(fingerprint["dockerBuildKit"], runner.docker_builder_identity)
+
 
 class FixtureProbeTests(unittest.TestCase):
     def test_fixture_probe_uses_the_resolved_remote_workspace(self) -> None:
@@ -1842,34 +1862,300 @@ class BuilderCleanupTests(unittest.TestCase):
             {"builder-container-id"},
         )
 
-    def test_docker_builder_uses_daemon_integrated_buildkit(self) -> None:
+    def test_docker_builder_uses_fresh_pinned_arm64_buildkit(self) -> None:
         with TemporaryDirectory() as temporary:
             runner = LaneRunner.__new__(LaneRunner)
             runner.lane = "docker"
             runner.repository = Path("/repository")
-            runner.environment = {"PATH": "/usr/bin:/bin"}
+            runner.environment = {"PATH": "/usr/bin:/bin", "DOCKER_CONFIG": temporary}
             runner.docker = "/usr/bin/docker"
             runner.output = Path(temporary)
             runner.builder_name = None
-
-            with mock.patch(
-                "run_lane.subprocess.run",
-                return_value=mock.Mock(returncode=0, stdout="ready", stderr=""),
-            ) as run:
+            runner.builder_container_ids = set()
+            pins = json.loads((Path(__file__).parents[2] / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+            runner.manifest = {"referencePins": {"docker": pins}}
+            name = "devcontainer-parity-docker-" + "a" * 24
+            container_name = f"buildx_buildkit_{name}0"
+            volume_name = f"{container_name}_state"
+            container = {"Name": f"/{container_name}", "Id": "owned-id", "Config": {"Image": pins["buildKitImage"]},
+                         "Mounts": [{"Type": "volume", "Name": volume_name, "Destination": "/var/lib/buildkit"}]}
+            with (mock.patch("run_lane.secrets.token_hex", return_value="a" * 24),
+                  mock.patch.object(runner, "docker_builder_resource",
+                                    side_effect=[None, None, container, {"Name": volume_name, "Driver": "local", "CreatedAt": "now"}]),
+                  mock.patch("run_lane.subprocess.run", side_effect=[
+                      mock.Mock(returncode=0, stdout=name + "\n", stderr=""),
+                      mock.Mock(returncode=0, stdout="BuildKit version: v0.30.0\n", stderr=""),
+                  ]) as run):
                 runner.prepare_builder()
 
         self.assertEqual(
-            run.call_args.args[0],
+            run.call_args_list[0].args[0],
             [
                 "/usr/bin/docker",
                 "buildx",
-                "inspect",
-                "--bootstrap",
-                "default",
+                "create", "--name", name, "--driver", "docker-container",
+                "--driver-opt", f"image={pins['buildKitImage']}",
+                "--driver-opt", "restart-policy=no",
             ],
         )
-        self.assertEqual(runner.environment["BUILDX_BUILDER"], "default")
-        self.assertIsNone(runner.builder_name)
+        self.assertEqual(run.call_args_list[1].args[0],
+                         ["/usr/bin/docker", "buildx", "inspect", "--bootstrap", name])
+        self.assertEqual(runner.environment["BUILDX_BUILDER"], name)
+        self.assertEqual(runner.builder_name, name)
+        self.assertEqual(runner.builder_container_ids, {"owned-id"})
+        self.assertEqual(runner.docker_builder_identity["containerID"], "owned-id")
+        self.assertEqual(runner.docker_builder_identity["volumeCreatedAt"], "now")
+
+    def test_docker_builder_create_failure_cleans_only_private_partial_config(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = None
+            runner.builder_container_ids = set()
+            runner.cleanup_differences = []
+            pins = json.loads((Path(__file__).parents[2] / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+            runner.manifest = {"referencePins": {"docker": pins}}
+            name = "devcontainer-parity-docker-" + "b" * 24
+            config = Path(temporary) / "buildx" / "instances" / name
+
+            def create(_argv, **_kwargs):
+                config.parent.mkdir(parents=True)
+                config.write_text("owned partial builder")
+                return mock.Mock(returncode=1, stdout="", stderr="create failed")
+
+            with (mock.patch("run_lane.secrets.token_hex", return_value="b" * 24),
+                  mock.patch.object(runner, "docker_builder_resource", return_value=None),
+                  mock.patch("run_lane.subprocess.run", side_effect=create)):
+                with self.assertRaisesRegex(ParityError, "cannot create exact fresh"):
+                    runner.prepare_builder()
+
+            def remove(argv, **_kwargs):
+                self.assertEqual(argv, ["/usr/bin/docker", "buildx", "rm", "--force", name])
+                config.unlink()
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with (mock.patch.object(runner, "docker_builder_resource", return_value=None),
+                  mock.patch("run_lane.subprocess.run", side_effect=remove)):
+                runner.stop_builder()
+            self.assertEqual(runner.cleanup_differences, [])
+            self.assertIsNone(runner.builder_name)
+            self.assertFalse(config.exists())
+
+    def test_docker_builder_refuses_name_collision_before_create(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = None
+            pins = json.loads((Path(__file__).parents[2] / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+            runner.manifest = {"referencePins": {"docker": pins}}
+            with (mock.patch("run_lane.secrets.token_hex", return_value="c" * 24),
+                  mock.patch.object(runner, "docker_builder_resource", return_value={"Id": "foreign"}),
+                  mock.patch("run_lane.subprocess.run") as create):
+                with self.assertRaisesRegex(ParityError, "already has resources"):
+                    runner.prepare_builder()
+            create.assert_not_called()
+            self.assertIsNone(runner.builder_name)
+
+    def test_docker_builder_bootstrap_failure_preserves_cleanup_ownership(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = None
+            runner.builder_container_ids = set()
+            runner.cleanup_differences = []
+            pins = json.loads((Path(__file__).parents[2] / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+            runner.manifest = {"referencePins": {"docker": pins}}
+            name = "devcontainer-parity-docker-" + "d" * 24
+            config = Path(temporary) / "buildx" / "instances" / name
+
+            def execute(argv, **_kwargs):
+                if argv[1:3] == ["buildx", "create"]:
+                    config.parent.mkdir(parents=True)
+                    config.write_text("owned builder")
+                    return mock.Mock(returncode=0, stdout=name + "\n", stderr="")
+                if argv[1:3] == ["buildx", "inspect"]:
+                    return mock.Mock(returncode=1, stdout="", stderr="bootstrap failed")
+                self.assertEqual(argv[1:3], ["buildx", "rm"])
+                config.unlink()
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with (mock.patch("run_lane.secrets.token_hex", return_value="d" * 24),
+                  mock.patch.object(runner, "docker_builder_resource", return_value=None),
+                  mock.patch("run_lane.subprocess.run", side_effect=execute)):
+                with self.assertRaisesRegex(ParityError, "did not report its pinned version"):
+                    runner.prepare_builder()
+                runner.stop_builder()
+            self.assertEqual(runner.cleanup_differences, [])
+            self.assertEqual(json.loads((runner.output / "buildx-cleanup.json").read_text())["status"], "restored")
+
+    def test_docker_builder_cleanup_refuses_changed_image(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = "devcontainer-parity-docker-owned"
+            runner.builder_container_ids = {"owned-id"}
+            runner.cleanup_differences = []
+            runner.docker_builder_identity = {
+                "name": runner.builder_name,
+                "containerName": "buildx_buildkit_devcontainer-parity-docker-owned0",
+                "volumeName": "buildx_buildkit_devcontainer-parity-docker-owned0_state",
+                "image": "moby/buildkit:v0.30.0@sha256:" + "a" * 64,
+                "containerID": "owned-id",
+            }
+            changed = {"Name": "/buildx_buildkit_devcontainer-parity-docker-owned0",
+                       "Id": "owned-id", "Config": {"Image": "another/image"}}
+            with (mock.patch.object(runner, "docker_builder_resource",
+                                    side_effect=[changed, {"Name": runner.docker_builder_identity["volumeName"],
+                                                           "Driver": "local", "CreatedAt": "now"}]),
+                  mock.patch("run_lane.subprocess.run") as remove):
+                runner.stop_builder()
+            remove.assert_not_called()
+            self.assertIn("ownership changed", runner.cleanup_differences[0])
+            self.assertEqual(runner.builder_name, runner.docker_builder_identity["name"])
+
+    def test_docker_builder_cleanup_removes_exact_container_and_volume(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = "devcontainer-parity-docker-owned"
+            runner.builder_container_ids = {"owned-id"}
+            runner.cleanup_differences = []
+            name = "buildx_buildkit_devcontainer-parity-docker-owned0"
+            volume_name = name + "_state"
+            runner.docker_builder_identity = {
+                "name": runner.builder_name, "containerName": name,
+                "volumeName": volume_name,
+                "image": "moby/buildkit:v0.30.0@sha256:" + "a" * 64,
+                "containerID": "owned-id",
+            }
+            config = Path(temporary) / "buildx" / "instances" / runner.builder_name
+            config.parent.mkdir(parents=True)
+            config.write_text("owned builder")
+            container = {"Name": f"/{name}", "Id": "owned-id",
+                         "Config": {"Image": runner.docker_builder_identity["image"]},
+                         "Mounts": [{"Type": "volume", "Name": volume_name, "Destination": "/var/lib/buildkit"}]}
+            volume = {"Name": volume_name, "Driver": "local", "CreatedAt": "now"}
+
+            def remove(argv, **_kwargs):
+                if argv[1:3] == ["buildx", "rm"]:
+                    config.unlink()
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            with (mock.patch.object(runner, "docker_builder_resource",
+                                    side_effect=[container, volume, container, volume, None, None]),
+                  mock.patch("run_lane.subprocess.run", side_effect=remove) as run):
+                runner.stop_builder()
+            self.assertEqual([call.args[0] for call in run.call_args_list], [
+                ["/usr/bin/docker", "buildx", "rm", "--force", "devcontainer-parity-docker-owned"],
+                ["/usr/bin/docker", "rm", "-f", "owned-id"],
+                ["/usr/bin/docker", "volume", "rm", volume_name],
+            ])
+            self.assertEqual(runner.cleanup_differences, [])
+            self.assertIsNone(runner.builder_name)
+            self.assertFalse(config.exists())
+            self.assertEqual(json.loads((runner.output / "buildx-cleanup.json").read_text())["status"], "restored")
+
+    def test_docker_builder_inspection_rejects_transport_errors(self) -> None:
+        runner = LaneRunner.__new__(LaneRunner)
+        runner.repository = Path("/repository")
+        runner.environment = {}
+        runner.docker = "/usr/bin/docker"
+        with mock.patch("run_lane.subprocess.run", return_value=mock.Mock(
+                returncode=1, stdout="", stderr="permission denied")):
+            with self.assertRaisesRegex(ParityError, "cannot inspect exact Docker builder"):
+                runner.docker_builder_resource("container", "owned")
+        with mock.patch("run_lane.subprocess.run", return_value=mock.Mock(
+                returncode=1, stdout="", stderr="Error response from daemon: no such volume")):
+            self.assertIsNone(runner.docker_builder_resource("volume", "owned"))
+
+    def test_docker_builder_requires_exact_cache_mount_and_container_id(self) -> None:
+        identity = {"containerName": "buildx_buildkit_owned0", "volumeName": "buildx_buildkit_owned0_state",
+                    "image": "pinned-image", "containerID": "first-id", "volumeCreatedAt": "first-time"}
+        container = {"Name": "/buildx_buildkit_owned0", "Id": "first-id",
+                     "Config": {"Image": "pinned-image"},
+                     "Mounts": [{"Type": "volume", "Name": "buildx_buildkit_owned0_state",
+                                 "Destination": "/var/lib/buildkit"}]}
+        volume = {"Name": "buildx_buildkit_owned0_state", "Driver": "local", "CreatedAt": "first-time"}
+        LaneRunner.require_docker_builder_ownership(container, volume, identity)
+        for change in ({"Id": "replacement-id"}, {"Mounts": []}):
+            with self.subTest(change=change):
+                with self.assertRaisesRegex(ParityError, "container ownership changed"):
+                    LaneRunner.require_docker_builder_ownership({**container, **change}, volume, identity)
+        with self.assertRaisesRegex(ParityError, "volume ownership changed"):
+            LaneRunner.require_docker_builder_ownership(container, {**volume, "CreatedAt": "later"}, identity)
+
+    def test_docker_builder_failed_removal_retains_uncertain_receipt(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = "devcontainer-parity-docker-owned"
+            runner.builder_container_ids = set()
+            runner.cleanup_differences = []
+            runner.docker_builder_identity = {
+                "name": runner.builder_name, "containerName": "buildx_buildkit_devcontainer-parity-docker-owned0",
+                "volumeName": "buildx_buildkit_devcontainer-parity-docker-owned0_state",
+                "image": "pinned-image",
+            }
+            config = Path(temporary) / "buildx" / "instances" / runner.builder_name
+            config.parent.mkdir(parents=True)
+            config.write_text("owned builder")
+            with (mock.patch.object(runner, "docker_builder_resource", return_value=None),
+                  mock.patch("run_lane.subprocess.run", return_value=mock.Mock(
+                      returncode=1, stdout="", stderr="rm failed"))):
+                runner.stop_builder()
+            self.assertEqual(json.loads((runner.output / "buildx-cleanup.json").read_text())["status"], "uncertain")
+            self.assertTrue(runner.cleanup_differences)
+            self.assertEqual(runner.builder_name, "devcontainer-parity-docker-owned")
+
+    def test_docker_builder_cleanup_retains_uncertain_volume(self) -> None:
+        with TemporaryDirectory() as temporary:
+            runner = LaneRunner.__new__(LaneRunner)
+            runner.lane = "docker"
+            runner.repository = Path("/repository")
+            runner.environment = {"DOCKER_CONFIG": temporary}
+            runner.docker = "/usr/bin/docker"
+            runner.output = Path(temporary)
+            runner.builder_name = "devcontainer-parity-docker-owned"
+            runner.builder_container_ids = set()
+            runner.cleanup_differences = []
+            runner.docker_builder_identity = {
+                "name": runner.builder_name, "containerName": "buildx_buildkit_devcontainer-parity-docker-owned0",
+                "volumeName": "buildx_buildkit_devcontainer-parity-docker-owned0_state",
+                "image": "moby/buildkit:v0.30.0@sha256:" + "a" * 64,
+                "volumeCreatedAt": "before",
+            }
+            changed_volume = {"Name": runner.docker_builder_identity["volumeName"],
+                              "Driver": "local", "CreatedAt": "after"}
+            with (mock.patch.object(runner, "docker_builder_resource", side_effect=[None, changed_volume]),
+                  mock.patch("run_lane.subprocess.run") as remove):
+                runner.stop_builder()
+            remove.assert_not_called()
+            self.assertIn("volume ownership changed", runner.cleanup_differences[0])
+            self.assertEqual(json.loads((runner.output / "buildx-cleanup.json").read_text())["status"], "uncertain")
 
     def test_builder_cleanup_reports_and_removes_exact_leaked_container(
         self,

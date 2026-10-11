@@ -4,6 +4,8 @@ Failed E07 attachment probes retain a bounded, payload-free stage summary so con
 
 Inventory cleanup captures durable identities before awaiting the native list, preserving containers created while that request is in flight. See the [creation race correction](docs/PR-inventory-creation-race.md).
 
+Docker parity now creates a fresh campaign-owned Buildx container and cache volume from an immutable arm64 BuildKit v0.30.0 image. It verifies their identity before timing fixtures and proves exact cleanup afterward, so prior campaigns cannot warm the Docker D05 Feature build. The original mixed-cache failure remains retained; a new complete release qualification is still required. See the [cache-isolation handoff](docs/PR-parity-cold-docker-builder.md).
+
 Executing native qualification sets a private `0077` umask before signed-package admission, so fresh SSD directory inventories match retained receipts even when the caller uses `0022`. Inert preflight remains read-only. See the [admission correction](docs/PR-umask-finalized-admission.md).
 
 The released Engine Bazel launcher now has an inert runfiles smoke test that exercises its real `--help` path and catches missing Python inputs before runtime qualification. See the [runfiles correction](docs/PR-released-engine-runfiles.md).

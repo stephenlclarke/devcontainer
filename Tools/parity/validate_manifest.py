@@ -72,6 +72,14 @@ def validate_manifest(payload: dict[str, Any], release: bool = False) -> None:
         re.fullmatch(r"\d+\.\d+\.\d+", str(docker.get("buildxVersion", ""))) is not None,
         "referencePins.docker.buildxVersion must be a pinned semantic version",
     )
+    _require(
+        docker.get("buildKitVersion") == "v0.30.0"
+        and docker.get("buildKitImage") == (
+            "moby/buildkit:v0.30.0@sha256:"
+            "b5c028faaade120f07ba841a0a0ff7a167e987a49590bed4261b495b2e1236be"
+        ),
+        "referencePins.docker must pin the verified arm64 BuildKit v0.30.0 image",
+    )
 
     release_host = references.get("releaseHost")
     _require(
