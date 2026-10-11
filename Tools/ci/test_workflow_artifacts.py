@@ -291,12 +291,12 @@ class WorkflowArtifactTests(unittest.TestCase):
         self.assertIn("uses: ./Tools/ci/upload-artifact-action", lane)
 
     def test_self_hosted_jobs_require_the_designated_mbp(self) -> None:
-        checked = 0
+        checked = set()
 
         for workflow, job, labels in workflow_runner_labels(workflow_files()):
             if not is_self_hosted_selector(labels):
                 continue
-            checked += 1
+            checked.add((workflow.name, job))
             self.assertIn(
                 "devcontainer-designated-mbp",
                 labels,
@@ -304,7 +304,12 @@ class WorkflowArtifactTests(unittest.TestCase):
             )
             self.assertNotIn("devcontainer-ultuk2m30000", labels)
 
-        self.assertEqual(checked, 3)
+        self.assertEqual(checked, {
+            ("parity.yml", "verify"),
+            ("prebuilt-binaries.yml", "package"),
+            ("verify-notary-identity.yml", "verify"),
+            ("recover-notary-profile.yml", "recover"),
+        })
 
     def test_runner_specification_parser_covers_yaml_forms(self) -> None:
         contents = """
