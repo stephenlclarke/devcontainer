@@ -1884,7 +1884,7 @@ class BuilderCleanupTests(unittest.TestCase):
                                     side_effect=[None, None, container, {"Name": volume_name, "Driver": "local", "CreatedAt": "now"}]),
                   mock.patch("run_lane.subprocess.run", side_effect=[
                       mock.Mock(returncode=0, stdout=name + "\n", stderr=""),
-                      mock.Mock(returncode=0, stdout="BuildKit version: v0.30.0\n", stderr=""),
+                      mock.Mock(returncode=0, stdout="BuildKit version:      v0.30.0\n", stderr=""),
                   ]) as run):
                 runner.prepare_builder()
 
@@ -1905,6 +1905,31 @@ class BuilderCleanupTests(unittest.TestCase):
         self.assertEqual(runner.builder_container_ids, {"owned-id"})
         self.assertEqual(runner.docker_builder_identity["containerID"], "owned-id")
         self.assertEqual(runner.docker_builder_identity["volumeCreatedAt"], "now")
+
+    def test_docker_builder_rejects_missing_duplicate_or_wrong_buildkit_version(self) -> None:
+        outputs = ("Name: builder\n", "BuildKit version: v0.30.0\nBuildKit version: v0.30.0\n",
+                   "BuildKit version: v0.29.0\n", "BuildKit version: v0.30.0 extra\n")
+        for output in outputs:
+            with self.subTest(output=output), TemporaryDirectory() as temporary:
+                runner = LaneRunner.__new__(LaneRunner)
+                runner.lane = "docker"
+                runner.repository = Path("/repository")
+                runner.environment = {"DOCKER_CONFIG": temporary}
+                runner.docker = "/usr/bin/docker"
+                runner.output = Path(temporary)
+                runner.builder_name = None
+                runner.builder_container_ids = set()
+                pins = json.loads((Path(__file__).parents[2] / "Tests/Parity/manifest.json").read_text())["referencePins"]["docker"]
+                runner.manifest = {"referencePins": {"docker": pins}}
+                name = "devcontainer-parity-docker-" + "c" * 24
+                with (mock.patch("run_lane.secrets.token_hex", return_value="c" * 24),
+                      mock.patch.object(runner, "docker_builder_resource", return_value=None),
+                      mock.patch("run_lane.subprocess.run", side_effect=[
+                          mock.Mock(returncode=0, stdout=name + "\n", stderr=""),
+                          mock.Mock(returncode=0, stdout=output, stderr=""),
+                      ])):
+                    with self.assertRaisesRegex(ParityError, "did not report its pinned version"):
+                        runner.prepare_builder()
 
     def test_docker_builder_create_failure_cleans_only_private_partial_config(self) -> None:
         with TemporaryDirectory() as temporary:
