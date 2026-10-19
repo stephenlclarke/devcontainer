@@ -311,3 +311,5 @@ deterministic build metadata, checksums, and SPDX 2.3 SBOMs. The bundled
 stock-profile Compose provider carries its own complete legal notice and SBOM
 inventory for the exact SwiftPM graph, vendored Go module graph, and Go
 standard library compiled into that process-isolated payload.
+
+The Docker CLI adapter follows Docker's directory-copy `/.` rule and distinguishes an explicitly selected Dockerfile from the context default. See the [adapter review follow-up](docs/PR-75.md#october-github-review-follow-up).

@@ -239,6 +239,7 @@ extension DockerCLIApplication {
 
 struct DockerBuildOptions: Equatable {
     var dockerfile = "Dockerfile"
+    private(set) var dockerfileWasSpecified = false
     var tags: [String] = []
     var target: String?
     var buildArguments: [String: String] = [:]
@@ -279,7 +280,9 @@ struct DockerBuildOptions: Equatable {
         index: inout Int
     ) throws -> Bool {
         switch option {
-        case "-f", "--file": dockerfile = try Self.value(arguments, &index, for: option)
+        case "-f", "--file":
+            dockerfile = try Self.value(arguments, &index, for: option)
+            dockerfileWasSpecified = true
         case "-t", "--tag": try tags.append(Self.value(arguments, &index, for: option))
         case "--target": target = try Self.value(arguments, &index, for: option)
         case "--build-arg":
@@ -466,7 +469,7 @@ struct DockerBuildOptions: Equatable {
             dockerfileURL: dockerfileURL
         )
         var matcher = try DockerIgnoreMatcher(contentsOf: ignoreURL)
-        let dockerfilePath = relativePath(dockerfileURL, within: contextURL)
+        let dockerfilePath = Self.relativePath(dockerfileURL, within: contextURL)
         let enumerator = FileManager.default.enumerator(
             at: contextURL,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
@@ -474,7 +477,7 @@ struct DockerBuildOptions: Equatable {
         )
         var entries: [String] = []
         while let url = enumerator?.nextObject() as? URL {
-            guard let path = relativePath(url, within: contextURL) else {
+            guard let path = Self.relativePath(url, within: contextURL) else {
                 continue
             }
             if path == dockerfilePath {
@@ -503,26 +506,27 @@ struct DockerBuildOptions: Equatable {
         return contextURL.appendingPathComponent(".dockerignore")
     }
 
-    private func relativePath(_ url: URL, within root: URL) -> String? {
+    static func relativePath(_ url: URL, within root: URL) -> String? {
         let lexicalURL = url.standardizedFileURL
         let lexicalRoot = root.standardizedFileURL
-        guard lexicalURL.path.hasPrefix(lexicalRoot.path + "/") else {
+        let prefix = lexicalRoot.path == "/" ? "/" : lexicalRoot.path + "/"
+        guard lexicalURL.path.hasPrefix(prefix) else {
             return nil
         }
-        return String(lexicalURL.path.dropFirst(lexicalRoot.path.count + 1))
+        return String(lexicalURL.path.dropFirst(prefix.count))
     }
 
     private var archivedDockerfile: String {
         let contextURL = URL(fileURLWithPath: context).standardizedFileURL
         let dockerfileURL = resolvedDockerfileURL(contextURL: contextURL)
-        if dockerfileURL.path.hasPrefix(contextURL.path + "/") {
-            return String(dockerfileURL.path.dropFirst(contextURL.path.count + 1))
+        if let path = Self.relativePath(dockerfileURL, within: contextURL) {
+            return path
         }
         return dockerfileURL.lastPathComponent
     }
 
-    private func resolvedDockerfileURL(contextURL: URL) -> URL {
-        if dockerfile == "Dockerfile" {
+    func resolvedDockerfileURL(contextURL: URL) -> URL {
+        if !dockerfileWasSpecified {
             return contextURL.appendingPathComponent(dockerfile).standardizedFileURL
         }
         return URL(

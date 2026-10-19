@@ -590,6 +590,34 @@ struct DockerCLITransferRegressionTests {
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: destination.path) == "missing")
     }
 
+    @Test(arguments: [false, true])
+    func `copy from container preserves directory contents marker`(contentsOnly: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("docker-cp-contents-\(UUID().uuidString)")
+        let source = root.appendingPathComponent("dir")
+        let destination = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let payload = Data("directory contents".utf8)
+        try payload.write(to: source.appendingPathComponent("value.txt"))
+        let result = try ProcessRunner.capturedSync(
+            executable: URL(fileURLWithPath: "/usr/bin/tar"),
+            arguments: ["-cf", "-", "-C", root.path, "dir"],
+            environment: ["COPYFILE_DISABLE": "1", "PATH": "/usr/bin:/bin"]
+        )
+        #expect(result.exitCode == 0)
+        let transport = try StubTransport([
+            .init(status: 200, headers: ["X-Docker-Container-Path-Stat": archiveStatHeader(name: "dir", mode: (1 << 31) | 0o755)], body: result.standardOutput)
+        ])
+        let remote = contentsOnly ? "box:/dir/." : "box:/dir"
+        #expect(try DockerCLIApplication(transport: transport).run(arguments: ["cp", remote, destination.path]).exitCode == 0)
+        let relative = contentsOnly ? "value.txt" : "dir/value.txt"
+        #expect(try Data(contentsOf: destination.appendingPathComponent(relative)) == payload)
+        if contentsOnly {
+            #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("dir").path))
+        }
+    }
+
     private func archiveEntries(_ archive: Data) throws -> Set<String> {
         let result = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),

@@ -80,3 +80,7 @@ Provide an independently packaged compatibility layer that:
 
 Implementation and release evidence are tracked by
 [pull request 75](https://github.com/stephenlclarke/devcontainer/pull/75).
+
+## October GitHub review follow-up
+
+The Docker CLI adapter preserves remote directory `/.` copy-out semantics, resolves explicitly supplied `-f Dockerfile` from the working directory, and handles `/` as a build-context root. The build-path and transfer regression suites pass all 22 tests, including both directory-copy modes, implicit/explicit Dockerfile selection, root children, and sibling exclusion. This is focused adapter proof; existing published parity and benchmark artifacts remain unchanged.

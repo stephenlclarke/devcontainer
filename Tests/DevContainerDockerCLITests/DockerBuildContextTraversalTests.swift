@@ -92,6 +92,24 @@ struct DockerBuildContextTraversalTests {
         #expect(!entries.contains("ignored/secret.txt"))
     }
 
+    @Test
+    func `explicit default Dockerfile resolves from the working directory`() throws {
+        let context = URL(fileURLWithPath: "/tmp/docker-build-subcontext")
+        let explicit = try DockerBuildOptions(arguments: ["-f", "Dockerfile", context.path])
+        let implicit = try DockerBuildOptions(arguments: [context.path])
+        #expect(explicit.resolvedDockerfileURL(contextURL: context)
+            == URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Dockerfile"))
+        #expect(implicit.resolvedDockerfileURL(contextURL: context)
+            == context.appendingPathComponent("Dockerfile"))
+    }
+
+    @Test
+    func `root context keeps child names and excludes sibling contexts`() {
+        #expect(DockerBuildOptions.relativePath(URL(fileURLWithPath: "/Dockerfile"), within: URL(fileURLWithPath: "/")) == "Dockerfile")
+        #expect(DockerBuildOptions.relativePath(URL(fileURLWithPath: "/tmp/item"), within: URL(fileURLWithPath: "/")) == "tmp/item")
+        #expect(DockerBuildOptions.relativePath(URL(fileURLWithPath: "/tmp/sibling/item"), within: URL(fileURLWithPath: "/tmp/context")) == nil)
+    }
+
     private func archiveEntries(_ archive: Data) throws -> Set<String> {
         let result = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),

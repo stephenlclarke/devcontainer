@@ -390,6 +390,7 @@ extension DockerCLIApplication {
         try Self.placeContainerArchive(
             archive,
             stat: Self.copyPathStat(response),
+            contentsOnly: remote.path.hasSuffix("/."),
             local: local,
             transferRoot: transferRoot
         )
@@ -429,6 +430,7 @@ extension DockerCLIApplication {
     private static func placeContainerArchive(
         _ archive: URL,
         stat: DockerCopyPathStat,
+        contentsOnly: Bool,
         local: String,
         transferRoot: URL
     ) throws {
@@ -450,7 +452,7 @@ extension DockerCLIApplication {
             )
         }
         if destinationExists, destinationIsDirectory.boolValue {
-            try Self.extractArchive(archive, into: destination)
+            try Self.extractArchive(archive, into: destination, stripTopDirectory: contentsOnly && stat.isDirectory)
             return
         }
 
@@ -483,10 +485,10 @@ extension DockerCLIApplication {
         try fileManager.moveItem(at: source, to: destination)
     }
 
-    private static func extractArchive(_ archive: URL, into destination: URL) throws {
+    private static func extractArchive(_ archive: URL, into destination: URL, stripTopDirectory: Bool = false) throws {
         let extracted = try ProcessRunner.capturedSync(
             executable: URL(fileURLWithPath: "/usr/bin/tar"),
-            arguments: ["-xf", archive.path, "-C", destination.path],
+            arguments: ["-xf", archive.path, "-C", destination.path] + (stripTopDirectory ? ["--strip-components", "1"] : []),
             environment: ["PATH": "/usr/bin:/bin"]
         )
         guard extracted.exitCode == 0 else {
