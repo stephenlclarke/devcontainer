@@ -230,10 +230,7 @@ extension AppleContainerRuntime {
                 imageID: imageID
             )
             observedRuntimeIDs.insert(snapshot.runtimeID.rawValue)
-            guard all || snapshot.state == .running else {
-                continue
-            }
-            guard labels.allSatisfy({ key, expected in
+            guard all || snapshot.state == .running, labels.allSatisfy({ key, expected in
                 guard let actual = snapshot.spec.labels[key] else {
                     return false
                 }

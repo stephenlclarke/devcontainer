@@ -32,7 +32,7 @@ func waitForSignalPIDMarker(_ url: URL, checks: Int = 400) async throws -> pid_t
     for _ in 0 ..< checks {
         if let value = try? String(contentsOf: url, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines),
-            let pid = pid_t(value), pid > 1
+           let pid = pid_t(value), pid > 1
         {
             return pid
         }

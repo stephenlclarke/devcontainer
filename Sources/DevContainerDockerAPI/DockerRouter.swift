@@ -217,11 +217,9 @@ public struct DockerRouter: DockerHTTPResponder, Sendable {
         guard mutation.provider == .containerCompose,
               request.method == .post,
               let target = try? ParsedTarget(request.target),
-              stripAPIVersion(target.path) == "/containers/create"
+              stripAPIVersion(target.path) == "/containers/create",
+              let creationProbe = runtime as? any RuntimeContainerCreationProbe
         else {
-            return false
-        }
-        guard let creationProbe = runtime as? any RuntimeContainerCreationProbe else {
             return false
         }
         do {
