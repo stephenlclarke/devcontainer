@@ -547,11 +547,31 @@ jobs:
         self.assertEqual(makefile.count("--sanitize=address"), 3)
         self.assertEqual(makefile.count("--sanitize=thread"), 3)
 
+    def test_swiftpm_tls_mirror_matches_the_profile_locks(self) -> None:
+        configuration = ROOT / ".swiftpm" / "configuration"
+        enhanced = json.loads((configuration / "mirrors.json").read_text(encoding="utf-8"))
+        stock = json.loads((configuration / "stock-mirrors.json").read_text(encoding="utf-8"))
+        urls = []
+        for filename in ("Package.stock.resolved", "Package.resolved"):
+            lock = json.loads((ROOT / filename).read_text(encoding="utf-8"))
+            pin = next(pin for pin in lock["pins"] if pin["identity"] == "swift-nio-ssl")
+            urls.append(pin["location"])
+
+        self.assertEqual(enhanced, {
+            "version": 1,
+            "object": [{"original": urls[0], "mirror": urls[1]}],
+        })
+        self.assertEqual(stock, {"version": 1, "object": []})
+
     def test_ci_builds_the_exact_stock_facing_sdk_graph(self) -> None:
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
         stock_job = workflow_job_block(ci, "stock-test")
 
         self.assertIn("DEVCONTAINER_RUNTIME_PROFILE: stock", stock_job)
+        self.assertIn(
+            "SWIFTPM_MIRROR_CONFIG: ${{ github.workspace }}/.swiftpm/configuration/stock-mirrors.json",
+            stock_job,
+        )
         self.assertIn("cp Package.stock.resolved Package.resolved", stock_job)
         resolve_step = workflow_step_block(stock_job, "Resolve stock dependencies")
         self.assertIn("swift package resolve", resolve_step)
@@ -561,6 +581,10 @@ jobs:
         self.assertIn('SWIFT_TEST_ACCEPT_SIGNAL_13: "0"', test_step)
         self.assertIn("run: make test", test_step)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn(
+            "export SWIFTPM_MIRROR_CONFIG ?= $(CURDIR)/.swiftpm/configuration/stock-mirrors.json",
+            makefile,
+        )
         self.assertIn("SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors", makefile)
         self.assertIn("test: swift-test", makefile)
         self.assertIn("swift-test: swiftpm-prepare\n", makefile)
