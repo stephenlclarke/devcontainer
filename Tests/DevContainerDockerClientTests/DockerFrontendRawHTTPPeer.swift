@@ -110,17 +110,17 @@ final class DockerFrontendRawHTTPPeer: Sendable {
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         let flags = fcntl(accepted, F_GETFL)
         guard setsockopt(
-            accepted,
-            SOL_SOCKET,
-            SO_NOSIGPIPE,
-            &noSignal,
-            socklen_t(MemoryLayout.size(ofValue: noSignal))
-        ) == 0,
-            setsockopt(accepted, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout))) ==
-            0,
-            setsockopt(accepted, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout))) ==
-            0,
-            flags >= 0, fcntl(accepted, F_SETFL, flags & ~O_NONBLOCK) == 0
+                  accepted,
+                  SOL_SOCKET,
+                  SO_NOSIGPIPE,
+                  &noSignal,
+                  socklen_t(MemoryLayout.size(ofValue: noSignal))
+              ) == 0,
+              setsockopt(accepted, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout))) ==
+              0,
+              setsockopt(accepted, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout))) ==
+              0,
+              flags >= 0, fcntl(accepted, F_SETFL, flags & ~O_NONBLOCK) == 0
         else { return }
         // Drain the request before close, avoiding a reset caused by unread input.
         var request = Data()

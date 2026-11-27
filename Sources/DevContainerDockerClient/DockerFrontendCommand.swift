@@ -65,15 +65,15 @@ public enum DockerFrontendCommand: Equatable, Sendable {
     private static func streaming(_ command: String, options: inout DockerFrontendArguments) throws -> Self {
         switch command {
         case "exec":
-            return try .exec(DockerExecCommand.parse(&options))
+            try .exec(DockerExecCommand.parse(&options))
         case "run":
-            return try .run(DockerRunCommand.parse(&options))
+            try .run(DockerRunCommand.parse(&options))
         case "events":
-            return try .events(DockerEventsCommand.parse(&options))
+            try .events(DockerEventsCommand.parse(&options))
         case "build":
-            return try .build(DockerBuildCommand.parse(&options))
+            try .build(DockerBuildCommand.parse(&options))
         case "pull":
-            return try .pull(DockerPullCommand.parse(&options))
+            try .pull(DockerPullCommand.parse(&options))
         default:
             // In particular, a Buildx version probe must fail, allowing the upstream fallback.
             throw DockerFrontendError.usage("unsupported devcontainer-docker command: \(command)")

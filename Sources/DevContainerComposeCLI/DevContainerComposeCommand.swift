@@ -215,10 +215,7 @@ enum DevContainerComposeCommand {
             return nil
         }
         try Task.checkCancellation()
-        guard result.exitCode == 0 else {
-            return nil
-        }
-        guard let output = String(bytes: result.standardOutput, encoding: .utf8) else {
+        guard result.exitCode == 0, let output = String(bytes: result.standardOutput, encoding: .utf8) else {
             return nil
         }
         return Set(

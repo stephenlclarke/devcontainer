@@ -74,9 +74,14 @@ struct ManagedNetworkHostsStore: Sendable {
         let hosts = try Self.createFile("hosts", in: share, bytes: bytes, mode: 0o644)
         let record = try Record(identity: identity, share: Node(share), hosts: hosts)
         _ = try Self.createFile("owner.json", in: slot, bytes: JSONEncoder().encode(record), mode: 0o600)
-        guard fsync(share) == 0, fsync(slot) == 0 else { throw Self.failure() }
-        guard renameatx_np(parent, staging, parent, name, UInt32(RENAME_EXCL)) == 0 else { throw Self.failure() }
-        guard fsync(parent) == 0 else { throw Self.failure() }
+        guard
+            fsync(share) == 0,
+            fsync(slot) == 0,
+            renameatx_np(parent, staging, parent, name, UInt32(RENAME_EXCL)) == 0,
+            fsync(parent) == 0
+        else {
+            throw Self.failure()
+        }
     }
 
     /// The caller supplies the operation identity from the creation journal.
@@ -121,10 +126,12 @@ struct ManagedNetworkHostsStore: Sendable {
             return
         }
         try withVerifiedFile(identity: identity) { parent, _ in
-            guard renameatx_np(parent, name, parent, name + ".retired", UInt32(RENAME_EXCL)) == 0 else {
+            guard
+                renameatx_np(parent, name, parent, name + ".retired", UInt32(RENAME_EXCL)) == 0,
+                fsync(parent) == 0
+            else {
                 throw Self.failure()
             }
-            guard fsync(parent) == 0 else { throw Self.failure() }
         }
         try recoverRemoval(identity: identity)
     }

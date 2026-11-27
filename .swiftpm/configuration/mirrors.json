@@ -1,0 +1,9 @@
+{
+  "object": [
+    {
+      "original": "https://github.com/apple/swift-nio-ssl.git",
+      "mirror": "https://github.com/stephenlclarke/swift-nio-ssl.git"
+    }
+  ],
+  "version": 1
+}

@@ -103,7 +103,7 @@ extension AppleContainerRuntime {
         guard native.status == .running, native.startedDate == target.startedAt,
               native.configuration.creationDate == target.createdAt,
               native.configuration.labels[Self.managedNetworkHostsLabel] == target.spec
-              .labels[Self.managedNetworkHostsLabel],
+                  .labels[Self.managedNetworkHostsLabel],
               let identity = try managedNetworkHostsIdentity(configuration: native.configuration)
         else { throw DevContainerError(.conflict, message: "Managed hosts target incarnation changed") }
         try context.checkActive()

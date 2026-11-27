@@ -380,10 +380,12 @@ extension AppleContainerRuntime {
             startedAt: target.startedAt,
             managedHosts: hosts
         )
-        guard managedHostsState[targetID] != nextState else {
+        guard
+            managedHostsState[targetID] != nextState,
+            try await networkHostsTargetIsCurrent(target, context: context)
+        else {
             return
         }
-        guard try await networkHostsTargetIsCurrent(target, context: context) else { return }
         if try await updateMountedNetworkHosts(target: target, hosts: hosts, context: context) {
             if try await networkHostsTargetIsCurrent(target, context: context) {
                 managedHostsState[targetID] = nextState

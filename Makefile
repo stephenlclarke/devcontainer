@@ -4,6 +4,9 @@ SHELL := /usr/bin/env bash
 
 DEVCONTAINER_VERSION ?= 1.1.0
 SWIFT ?= swift
+ifeq ($(DEVCONTAINER_RUNTIME_PROFILE),stock)
+export SWIFTPM_MIRROR_CONFIG ?= $(CURDIR)/.swiftpm/configuration/stock-mirrors.json
+endif
 SWIFT_STRICT_FLAGS ?= -Xswiftc -warnings-as-errors
 PYTHON ?= python3
 MARKDOWNLINT ?= markdownlint

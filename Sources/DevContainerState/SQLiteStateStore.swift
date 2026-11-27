@@ -585,8 +585,8 @@ public actor SQLiteStateStore: ProjectStateStore, RuntimeCreationStore {
     public func hasPendingContainerCreations() async throws -> Bool {
         try withStatement("SELECT 1 FROM runtime_container_creations LIMIT 1") { statement in
             switch sqlite3_step(statement) {
-            case SQLITE_ROW: return true
-            case SQLITE_DONE: return false
+            case SQLITE_ROW: true
+            case SQLITE_DONE: false
             default: throw Self.sqliteError(database, prefix: "cannot check pending container creation")
             }
         }

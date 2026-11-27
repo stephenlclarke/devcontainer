@@ -29,7 +29,7 @@ public struct DockerExecCommand: Equatable, Sendable {
         }
         guard let container, !container.isEmpty, let executable = command.first, !executable.isEmpty,
               ([container] + command + values.environment + [values.user, values.workingDirectory].compactMap(\.self))
-              .allSatisfy({ !$0.contains("\0") })
+                  .allSatisfy({ !$0.contains("\0") })
         else {
             throw DockerFrontendError.usage("exec requires a container and command without NUL bytes")
         }

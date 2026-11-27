@@ -343,6 +343,8 @@ make serve-docs
 DEVCONTAINER_VSCODE_LIVE=1 make parity-vscode-docker
 ```
 
+SwiftPM uses the repository's TLS mirror for the default enhanced profile, so transitive requests for Apple's `swift-nio-ssl` use the same fork as the enhanced lock. Stock Make targets and hosted stock tests use the empty stock mirror configuration. For direct stock `swift` commands, set `SWIFTPM_MIRROR_CONFIG="$PWD/.swiftpm/configuration/stock-mirrors.json"` as well as `DEVCONTAINER_RUNTIME_PROFILE=stock` and select the stock lock in a separate checkout.
+
 Hosted stock tests use the same explicit sequential test runner as `make test`, with one attempt and a five-minute test-execution deadline after compilation. Failures and timeouts retain their logs; a SwiftPM helper signal does not count as success in this job. Blocking socket readiness checks in the async input fixtures run on an OS queue while preserving their existing five-second deadlines.
 
 SQLite output journaling bounds each lock-contention sequence with a monotonic one-second deadline, including the best-effort failure marker. A released competing lock still permits the append; the existing four-second failure assertion and incomplete-history checks remain in place.

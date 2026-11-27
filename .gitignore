@@ -1,6 +1,10 @@
 .DS_Store
 .build/
-.swiftpm/
+.swiftpm/*
+!.swiftpm/configuration/
+.swiftpm/configuration/*
+!.swiftpm/configuration/mirrors.json
+!.swiftpm/configuration/stock-mirrors.json
 _serve/
 _site/
 __pycache__/

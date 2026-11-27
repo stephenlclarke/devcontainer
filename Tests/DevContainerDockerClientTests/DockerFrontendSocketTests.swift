@@ -394,9 +394,9 @@ enum FrontendExecutable {
     static var sanitizerEnvironment: [String: String] {
         #if DEVCONTAINER_TSAN
             // The fixture excludes external clients from PATH; retain TSan's symbolizer explicitly.
-            return ["TSAN_OPTIONS": "external_symbolizer_path=/usr/bin/atos"]
+            ["TSAN_OPTIONS": "external_symbolizer_path=/usr/bin/atos"]
         #else
-            return [:]
+            [:]
         #endif
     }
 
